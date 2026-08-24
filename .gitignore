@@ -3,7 +3,6 @@ bin/
 main
 main.exe
 src/gowa
-.claude
 
 # Build artifacts
 src/pkged.go
@@ -44,3 +43,11 @@ docs/superpowers/
 # whatsmeow store (legacy path)
 src/whatsapp/
 .mcp.json
+
+# Contexto local de agentes (nao versionado)
+CLAUDE.local.md
+
+# .claude/ e versionado (settings.json, skills/, agents/).
+# So o que e pessoal ou gerado fica de fora.
+.claude/settings.local.json
+.claude/worktrees/

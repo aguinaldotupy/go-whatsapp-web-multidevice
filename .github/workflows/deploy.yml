@@ -1,0 +1,115 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to LXC 139 (gowa)
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.0"
+
+      - name: Build (CGO, linux/amd64)
+        working-directory: src
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          go build -o whatsapp .
+          file whatsapp
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          version: latest
+
+      - name: Resolve Tailscale peer
+        id: ts
+        run: |
+          set -euxo pipefail
+          tailscale status
+          ip=$(tailscale ip -4 gowa)
+          echo "host=$ip" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null
+
+      - name: Ship binary
+        env:
+          DEPLOY_HOST: ${{ steps.ts.outputs.host }}
+        run: |
+          set -euxo pipefail
+          scp -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes \
+              -i ~/.ssh/id_ed25519 \
+              src/whatsapp "gowa@$DEPLOY_HOST:/tmp/whatsapp-${{ github.sha }}"
+
+      - name: Deploy on gowa
+        env:
+          DEPLOY_HOST: ${{ steps.ts.outputs.host }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euxo pipefail
+          ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes \
+              -i ~/.ssh/id_ed25519 "gowa@$DEPLOY_HOST" \
+              "DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'EOSSH'
+          set -euxo pipefail
+          cd /opt/gowa/bin
+
+          echo "::group::smoke-test the new binary before touching anything live"
+          chmod 755 "/tmp/whatsapp-$DEPLOY_SHA"
+          "/tmp/whatsapp-$DEPLOY_SHA" --help >/dev/null
+          echo "::endgroup::"
+
+          echo "::group::swap binary"
+          cp -a whatsapp "whatsapp.bak-$DEPLOY_SHA-prev"
+          mv "/tmp/whatsapp-$DEPLOY_SHA" whatsapp
+          echo "::endgroup::"
+
+          echo "::group::restart"
+          sudo -n systemctl restart gowa
+          sleep 5
+          sudo -n systemctl is-active gowa
+          echo "::endgroup::"
+          EOSSH
+
+      - name: Smoke test
+        env:
+          DEPLOY_HOST: ${{ steps.ts.outputs.host }}
+        run: |
+          set -euxo pipefail
+          status=$(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes \
+              -i ~/.ssh/id_ed25519 "gowa@$DEPLOY_HOST" \
+              "curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:3000/health")
+          echo "/health -> HTTP $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Smoke test returned $status (expected 200) — service may be broken, check journalctl -u gowa on the LXC"
+            exit 1
+          fi

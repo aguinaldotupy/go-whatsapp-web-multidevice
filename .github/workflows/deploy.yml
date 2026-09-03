@@ -25,6 +25,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.0"
+          cache-dependency-path: src/go.sum
 
       - name: Build (CGO, linux/amd64)
         working-directory: src
@@ -91,6 +92,10 @@ jobs:
           echo "::group::swap binary"
           cp -a whatsapp "whatsapp.bak-$DEPLOY_SHA-prev"
           mv "/tmp/whatsapp-$DEPLOY_SHA" whatsapp
+          echo "::endgroup::"
+
+          echo "::group::prune old backups (keep last 3)"
+          ls -t whatsapp.bak-*-prev 2>/dev/null | tail -n +4 | xargs -r rm -v --
           echo "::endgroup::"
 
           echo "::group::restart"

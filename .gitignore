@@ -51,3 +51,7 @@ CLAUDE.local.md
 # So o que e pessoal ou gerado fica de fora.
 .claude/settings.local.json
 .claude/worktrees/
+
+# Local scripts
+config_chatwoot.sh
+

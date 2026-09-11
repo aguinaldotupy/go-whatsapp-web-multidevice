@@ -209,6 +209,7 @@ func payloadHasNoRenderableContent(payload map[string]any) bool {
 		"body",
 		"image", "audio", "video", "video_note", "document", "sticker",
 		"contact", "contacts_array", "list", "live_location", "location", "order",
+		"interactive", "buttons", "pix", "payment_request", "button_response",
 	}
 	for _, key := range renderableKeys {
 		if _, ok := payload[key]; ok {
@@ -236,7 +237,11 @@ func hasRecognizedMessageType(msg *waE2E.Message) bool {
 		msg.GetListMessage() != nil,
 		msg.GetLiveLocationMessage() != nil,
 		msg.GetLocationMessage() != nil,
-		msg.GetOrderMessage() != nil:
+		msg.GetOrderMessage() != nil,
+		msg.GetInteractiveMessage() != nil,
+		msg.GetInteractiveResponseMessage() != nil,
+		msg.GetRequestPaymentMessage() != nil,
+		msg.GetSendPaymentMessage() != nil:
 		return true
 	default:
 		return false
@@ -305,11 +310,11 @@ func buildMessageBody(ctx context.Context, client *whatsmeow.Client, evt *events
 		payload["body"] = message.Text
 	}
 
-	// Fallback: extract caption from media messages if no text body was set
+	// Fallback: extract caption or text from other message types if no text body was set
 	if _, hasBody := payload["body"]; !hasBody {
 		msg := utils.UnwrapMessage(evt.Message)
-		if caption := utils.ExtractMediaCaption(msg); caption != "" {
-			payload["body"] = caption
+		if text := utils.ExtractMessageTextFromProto(msg); text != "" {
+			payload["body"] = text
 		}
 	}
 
@@ -580,6 +585,24 @@ func buildOtherMessageTypes(msg *waE2E.Message, payload map[string]any) {
 		// miss on retry and silently downgrade to the generic sentinel,
 		// losing the CTA label/URL/phone/code the live path just extracted.
 		payload["interactive"] = formatInteractiveMessageSummary(interactiveMessage)
+		if buttons := utils.ExtractButtonsFromInteractive(interactiveMessage); len(buttons) > 0 {
+			payload["buttons"] = buttons
+		}
+		if pix := utils.ExtractPixFromInteractive(interactiveMessage); pix != nil {
+			payload["pix"] = pix
+		}
+	}
+
+	if interactiveResponse := msg.GetInteractiveResponseMessage(); interactiveResponse != nil {
+		if btnResp := utils.ExtractButtonResponse(interactiveResponse); btnResp != nil {
+			payload["button_response"] = btnResp
+		}
+	}
+
+	if reqPayment := msg.GetRequestPaymentMessage(); reqPayment != nil {
+		if paymentReq := utils.ExtractPaymentRequest(reqPayment); paymentReq != nil {
+			payload["payment_request"] = paymentReq
+		}
 	}
 }
 

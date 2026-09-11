@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
@@ -806,6 +807,312 @@ func TestExtractContextInfoInteractiveMessage(t *testing.T) {
 		}
 		if ci := ExtractContextInfo(msg); ci != nil {
 			t.Fatalf("expected nil ContextInfo, got %+v", ci)
+		}
+	})
+}
+
+func TestValidateAndDetectPixType(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		wantType  string
+		wantValid bool
+	}{
+		{
+			name:      "valid raw CPF",
+			key:       "11144477735",
+			wantType:  "cpf",
+			wantValid: true,
+		},
+		{
+			name:      "valid formatted CPF",
+			key:       "111.444.777-35",
+			wantType:  "cpf",
+			wantValid: true,
+		},
+		{
+			name:      "invalid CPF all same digits",
+			key:       "11111111111",
+			wantType:  "",
+			wantValid: false,
+		},
+		{
+			name:      "valid formatted CNPJ",
+			key:       "11.222.333/0001-81",
+			wantType:  "cnpj",
+			wantValid: true,
+		},
+		{
+			name:      "valid raw CNPJ",
+			key:       "11222333000181",
+			wantType:  "cnpj",
+			wantValid: true,
+		},
+		{
+			name:      "valid phone with +55",
+			key:       "+5511987654321",
+			wantType:  "phone",
+			wantValid: true,
+		},
+		{
+			name:      "valid phone with 55 without plus",
+			key:       "5511987654321",
+			wantType:  "phone",
+			wantValid: true,
+		},
+		{
+			name:      "valid formatted phone",
+			key:       "+55 (11) 98765-4321",
+			wantType:  "phone",
+			wantValid: true,
+		},
+		{
+			name:      "valid landline phone",
+			key:       "1133334444",
+			wantType:  "phone",
+			wantValid: true,
+		},
+		{
+			name:      "valid email",
+			key:       "usuario.pix@empresa.com.br",
+			wantType:  "email",
+			wantValid: true,
+		},
+		{
+			name:      "valid EVP random key (UUID)",
+			key:       "123e4567-e89b-12d3-a456-426614174000",
+			wantType:  "evp",
+			wantValid: true,
+		},
+		{
+			name:      "valid EMV Copia e Cola",
+			key:       "00020126580014br.gov.bcb.pix0136123e4567-e89b-12d3-a456-426614174000520400005303986540510.005802BR5913Fulano6008SP62070503***6304ABCD",
+			wantType:  "copia_e_cola",
+			wantValid: true,
+		},
+		{
+			name:      "coupon code is not pix",
+			key:       "DESCONTO10",
+			wantType:  "",
+			wantValid: false,
+		},
+		{
+			name:      "random url is not pix",
+			key:       "https://google.com",
+			wantType:  "",
+			wantValid: false,
+		},
+		{
+			name:      "empty key",
+			key:       "",
+			wantType:  "",
+			wantValid: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotType, gotValid := ValidateAndDetectPixType(tt.key)
+			if gotValid != tt.wantValid {
+				t.Errorf("ValidateAndDetectPixType(%q) valid = %v, want %v", tt.key, gotValid, tt.wantValid)
+			}
+			if gotType != tt.wantType {
+				t.Errorf("ValidateAndDetectPixType(%q) type = %q, want %q", tt.key, gotType, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestExtractPixFromInteractive(t *testing.T) {
+	t.Run("pix button with CPF", func(t *testing.T) {
+		im := &waE2E.InteractiveMessage{
+			Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Chave Pix")},
+			Body:   &waE2E.InteractiveMessage_Body{Text: proto.String("Pagamento de teste")},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+					Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+						{
+							Name:             proto.String("cta_copy"),
+							ButtonParamsJSON: proto.String(`{"display_text":"Copiar chave Pix","copy_code":"11144477735"}`),
+						},
+					},
+				},
+			},
+		}
+
+		pix := ExtractPixFromInteractive(im)
+		if pix == nil {
+			t.Fatal("expected non-nil PixPayload")
+		}
+		if pix.Key != "11144477735" {
+			t.Errorf("got key %q, want %q", pix.Key, "11144477735")
+		}
+		if pix.Type != "cpf" {
+			t.Errorf("got type %q, want %q", pix.Type, "cpf")
+		}
+		if pix.Label != "Copiar chave Pix" {
+			t.Errorf("got label %q, want %q", pix.Label, "Copiar chave Pix")
+		}
+	})
+
+	t.Run("generic coupon button must not produce pix payload", func(t *testing.T) {
+		im := &waE2E.InteractiveMessage{
+			Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Cupom de Desconto")},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+					Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+						{
+							Name:             proto.String("cta_copy"),
+							ButtonParamsJSON: proto.String(`{"display_text":"Copiar Cupom","copy_code":"SAVE10"}`),
+						},
+					},
+				},
+			},
+		}
+
+		pix := ExtractPixFromInteractive(im)
+		if pix != nil {
+			t.Fatalf("expected nil PixPayload for coupon, got %+v", pix)
+		}
+	})
+
+	t.Run("EMV Copia e Cola without pix in label is detected as pix", func(t *testing.T) {
+		emv := "00020126580014br.gov.bcb.pix0136123e4567-e89b-12d3-a456-426614174000520400005303986540510.005802BR5913Fulano6008SP62070503***6304ABCD"
+		im := &waE2E.InteractiveMessage{
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+					Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+						{
+							Name:             proto.String("cta_copy"),
+							ButtonParamsJSON: proto.String(fmt.Sprintf(`{"display_text":"Copiar Código","copy_code":%q}`, emv)),
+						},
+					},
+				},
+			},
+		}
+
+		pix := ExtractPixFromInteractive(im)
+		if pix == nil {
+			t.Fatal("expected non-nil PixPayload for EMV")
+		}
+		if pix.Type != "copia_e_cola" {
+			t.Errorf("got type %q, want copia_e_cola", pix.Type)
+		}
+	})
+}
+
+func TestExtractButtonsFromInteractive(t *testing.T) {
+	im := &waE2E.InteractiveMessage{
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+					{
+						Name:             proto.String("cta_url"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Site","url":"https://example.com"}`),
+					},
+					{
+						Name:             proto.String("cta_call"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Ligue","phone_number":"+5511999999999"}`),
+					},
+					{
+						Name:             proto.String("cta_copy"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Copiar","copy_code":"11144477735"}`),
+					},
+					{
+						Name:             proto.String("quick_reply"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Confirmar","id":"btn_ok"}`),
+					},
+					{
+						Name:             proto.String("single_select"),
+						ButtonParamsJSON: proto.String(`{"title":"Menu"}`),
+					},
+				},
+			},
+		},
+	}
+
+	buttons := ExtractButtonsFromInteractive(im)
+	if len(buttons) != 5 {
+		t.Fatalf("expected 5 buttons, got %d", len(buttons))
+	}
+
+	if buttons[0].Type != "cta_url" || buttons[0].URL != "https://example.com" {
+		t.Errorf("button 0 mismatch: %+v", buttons[0])
+	}
+	if buttons[1].Type != "cta_call" || buttons[1].Phone != "+5511999999999" {
+		t.Errorf("button 1 mismatch: %+v", buttons[1])
+	}
+	if buttons[2].Type != "cta_copy" || buttons[2].Value != "11144477735" {
+		t.Errorf("button 2 mismatch: %+v", buttons[2])
+	}
+	if buttons[3].Type != "quick_reply" || buttons[3].ID != "btn_ok" {
+		t.Errorf("button 3 mismatch: %+v", buttons[3])
+	}
+	if buttons[4].Type != "single_select" || buttons[4].Label != "Menu" {
+		t.Errorf("button 4 mismatch: %+v", buttons[4])
+	}
+}
+
+func TestExtractMessageTextFromProtoInteractiveAndPayment(t *testing.T) {
+	t.Run("extracts interactive message text", func(t *testing.T) {
+		msg := &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Chave Pix")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: proto.String("Faça o pagamento")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             proto.String("cta_copy"),
+								ButtonParamsJSON: proto.String(`{"display_text":"Copiar chave Pix","copy_code":"11144477735"}`),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		got := ExtractMessageTextFromProto(msg)
+		want := "Chave Pix\nFaça o pagamento\n📋 Copiar chave Pix: 11144477735"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("extracts interactive response message text", func(t *testing.T) {
+		msg := &waE2E.Message{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+				InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+					NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+						Name:       proto.String("quick_reply"),
+						ParamsJSON: proto.String(`{"id":"btn_yes","title":"Sim, confirmo"}`),
+					},
+				},
+			},
+		}
+
+		got := ExtractMessageTextFromProto(msg)
+		want := "Sim, confirmo"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("extracts request payment message", func(t *testing.T) {
+		msg := &waE2E.Message{
+			RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: proto.String("BRL"),
+				Amount1000:          proto.Uint64(50000),
+				NoteMessage: &waE2E.Message{
+					Conversation: proto.String("Almoço"),
+				},
+			},
+		}
+
+		got := ExtractMessageTextFromProto(msg)
+		want := "💰 Payment request: BRL 50.00 - Almoço"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 }

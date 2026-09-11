@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCommon"
@@ -566,3 +567,183 @@ func TestBuildEventPayloadIncludesSenderDisplayName(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildEventPayloadInteractiveWithPix(t *testing.T) {
+	cpf := "11144477735"
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "PIX-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: protoString("Pagamento Pix")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: protoString("Pague sua conta aqui")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             protoString("cta_copy"),
+								ButtonParamsJSON: protoString(`{"display_text":"Copiar chave Pix","copy_code":"` + cpf + `"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	// Body fallback should contain formatted text
+	assert.Contains(t, payload["body"], "Pagamento Pix")
+	assert.Contains(t, payload["body"], cpf)
+
+	// Interactive summary preserved
+	assert.NotEmpty(t, payload["interactive"])
+
+	// Buttons populated
+	buttons, ok := payload["buttons"].([]utils.InteractiveButtonPayload)
+	assert.True(t, ok, "buttons should be []utils.InteractiveButtonPayload")
+	assert.Len(t, buttons, 1)
+	assert.Equal(t, "cta_copy", buttons[0].Type)
+	assert.Equal(t, cpf, buttons[0].Value)
+
+	// Pix payload populated
+	pix, ok := payload["pix"].(*utils.PixPayload)
+	assert.True(t, ok, "pix should be *utils.PixPayload")
+	assert.NotNil(t, pix)
+	assert.Equal(t, "cpf", pix.Type)
+	assert.Equal(t, cpf, pix.Key)
+	assert.Equal(t, "Copiar chave Pix", pix.Label)
+}
+
+func TestBuildEventPayloadInteractiveNonPix(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "COUPON-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: protoString("Desconto Especial")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: protoString("Use o cupom abaixo")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             protoString("cta_copy"),
+								ButtonParamsJSON: protoString(`{"display_text":"Copiar Cupom","copy_code":"PROMO50"}`),
+							},
+							{
+								Name:             protoString("cta_url"),
+								ButtonParamsJSON: protoString(`{"display_text":"Ver Loja","url":"https://example.com"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	// Buttons populated
+	buttons, ok := payload["buttons"].([]utils.InteractiveButtonPayload)
+	assert.True(t, ok)
+	assert.Len(t, buttons, 2)
+
+	// Pix MUST NOT be populated for generic coupons
+	assert.Nil(t, payload["pix"], "pix payload must be nil for generic non-pix buttons")
+}
+
+func TestBuildEventPayloadInteractiveResponse(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "RESP-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+				InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+					NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+						Name:       protoString("quick_reply"),
+						ParamsJSON: protoString(`{"id":"confirm_btn","title":"Confirmar"}`),
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	assert.Equal(t, "Confirmar", payload["body"])
+
+	btnResp, ok := payload["button_response"].(*utils.ButtonResponsePayload)
+	assert.True(t, ok, "button_response should be *utils.ButtonResponsePayload")
+	assert.NotNil(t, btnResp)
+	assert.Equal(t, "confirm_btn", btnResp.ID)
+	assert.Equal(t, "Confirmar", btnResp.Title)
+}
+
+func TestBuildEventPayloadRequestPayment(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "PAY-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: protoString("BRL"),
+				Amount1000:          protoUint64(150000),
+				NoteMessage: &waE2E.Message{
+					Conversation: protoString("Pagamento do serviço"),
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	assert.Contains(t, payload["body"], "Payment request: BRL 150.00 - Pagamento do serviço")
+
+	payReq, ok := payload["payment_request"].(*utils.PaymentRequestPayload)
+	assert.True(t, ok, "payment_request should be *utils.PaymentRequestPayload")
+	assert.NotNil(t, payReq)
+	assert.Equal(t, "BRL", payReq.Currency)
+	assert.Equal(t, float64(150), payReq.Amount)
+	assert.Equal(t, "Pagamento do serviço", payReq.Note)
+}
+
+func protoUint64(v uint64) *uint64 {
+	return &v
+}
+

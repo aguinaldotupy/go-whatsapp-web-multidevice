@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -177,6 +178,10 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
 	}
+	msg = UnwrapMessage(msg)
+	if msg == nil {
+		return ""
+	}
 
 	// Check for regular text message
 	if text := msg.GetConversation(); text != "" {
@@ -193,6 +198,26 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 		if m := extendedText.GetMatchedText(); m != "" {
 			return m
 		}
+	}
+
+	// Check for interactive message (native flow buttons, pix, cta cards)
+	if im := msg.GetInteractiveMessage(); im != nil {
+		return FormatInteractiveMessageSummary(im)
+	}
+
+	// Check for interactive response message (button click / flow response)
+	if ir := msg.GetInteractiveResponseMessage(); ir != nil {
+		return ExtractInteractiveResponseText(ir)
+	}
+
+	// Check for payment request
+	if req := msg.GetRequestPaymentMessage(); req != nil {
+		return FormatPaymentRequestSummary(req)
+	}
+
+	// Check for send payment
+	if send := msg.GetSendPaymentMessage(); send != nil {
+		return FormatSendPaymentSummary(send)
 	}
 
 	// Check for image with caption
@@ -250,6 +275,571 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 	}
 
 	return ""
+}
+
+// InteractiveButtonPayload represents an extracted button from an interactive message for API consumers.
+type InteractiveButtonPayload struct {
+	Type  string `json:"type"`
+	Label string `json:"label,omitempty"`
+	Value string `json:"value,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Phone string `json:"phone,omitempty"`
+	ID    string `json:"id,omitempty"`
+}
+
+// PixPayload represents an identified and validated Pix key/payment from an interactive message.
+type PixPayload struct {
+	Key   string `json:"key"`
+	Type  string `json:"type"` // "cpf", "cnpj", "phone", "email", "evp", "copia_e_cola"
+	Label string `json:"label,omitempty"`
+}
+
+// ButtonResponsePayload represents the user's interaction/click on a button or flow.
+type ButtonResponsePayload struct {
+	ID    string `json:"id,omitempty"`
+	Title string `json:"title,omitempty"`
+	Type  string `json:"type,omitempty"`
+}
+
+// PaymentRequestPayload represents a WhatsApp Pay payment request.
+type PaymentRequestPayload struct {
+	Currency        string  `json:"currency,omitempty"`
+	Amount1000      uint64  `json:"amount_1000,omitempty"`
+	Amount          float64 `json:"amount,omitempty"`
+	RequestFrom     string  `json:"request_from,omitempty"`
+	ExpiryTimestamp int64   `json:"expiry_timestamp,omitempty"`
+	Note            string  `json:"note,omitempty"`
+}
+
+// NativeFlowButtonParams covers parameters deserialized from buttonParamsJSON in native flow buttons.
+type NativeFlowButtonParams struct {
+	DisplayText string `json:"display_text"`
+	URL         string `json:"url"`
+	PhoneNumber string `json:"phone_number"`
+	Copy        string `json:"copy_code"`
+	Title       string `json:"title"`
+	ID          string `json:"id"`
+	FlowID      string `json:"flow_id"`
+}
+
+var (
+	reOnlyDigits = regexp.MustCompile(`\D`)
+	reEmail      = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	reUUID       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	reCPFFormat  = regexp.MustCompile(`^\d{3}\.\d{3}\.\d{3}-\d{2}$`)
+	reCNPJFormat = regexp.MustCompile(`^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}$`)
+)
+
+func isValidCPF(cpf string) bool {
+	if len(cpf) != 11 {
+		return false
+	}
+	allSame := true
+	for i := 1; i < 11; i++ {
+		if cpf[i] != cpf[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return false
+	}
+
+	sum := 0
+	for i := 0; i < 9; i++ {
+		sum += int(cpf[i]-'0') * (10 - i)
+	}
+	rem := sum % 11
+	d1 := 0
+	if rem >= 2 {
+		d1 = 11 - rem
+	}
+	if d1 != int(cpf[9]-'0') {
+		return false
+	}
+
+	sum = 0
+	for i := 0; i < 10; i++ {
+		sum += int(cpf[i]-'0') * (11 - i)
+	}
+	rem = sum % 11
+	d2 := 0
+	if rem >= 2 {
+		d2 = 11 - rem
+	}
+	return d2 == int(cpf[10]-'0')
+}
+
+func isValidCNPJ(cnpj string) bool {
+	if len(cnpj) != 14 {
+		return false
+	}
+	allSame := true
+	for i := 1; i < 14; i++ {
+		if cnpj[i] != cnpj[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return false
+	}
+
+	weights1 := []int{5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
+	sum := 0
+	for i := 0; i < 12; i++ {
+		sum += int(cnpj[i]-'0') * weights1[i]
+	}
+	d1 := sum % 11
+	if d1 < 2 {
+		d1 = 0
+	} else {
+		d1 = 11 - d1
+	}
+	if d1 != int(cnpj[12]-'0') {
+		return false
+	}
+
+	weights2 := []int{6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
+	sum = 0
+	for i := 0; i < 13; i++ {
+		sum += int(cnpj[i]-'0') * weights2[i]
+	}
+	d2 := sum % 11
+	if d2 < 2 {
+		d2 = 0
+	} else {
+		d2 = 11 - d2
+	}
+	return d2 == int(cnpj[13]-'0')
+}
+
+// ValidateAndDetectPixType verifies if key is a valid Brazilian Pix key or EMV payload
+// and returns its detected type ("cpf", "cnpj", "phone", "email", "evp", "copia_e_cola").
+func ValidateAndDetectPixType(key string) (string, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", false
+	}
+
+	// 1. EMV Pix Copia e Cola
+	if strings.HasPrefix(key, "000201") && strings.Contains(key, "br.gov.bcb.pix") {
+		return "copia_e_cola", true
+	}
+
+	// 2. EVP (Chave aleatória - UUID)
+	if reUUID.MatchString(key) {
+		return "evp", true
+	}
+
+	// 3. E-mail
+	if reEmail.MatchString(key) {
+		return "email", true
+	}
+
+	// 4. Formatted CPF
+	if reCPFFormat.MatchString(key) {
+		return "cpf", true
+	}
+
+	// 5. Formatted CNPJ
+	if reCNPJFormat.MatchString(key) {
+		return "cnpj", true
+	}
+
+	// 6. Phone with country code (+55...)
+	if strings.HasPrefix(key, "+55") || strings.HasPrefix(key, "55") {
+		digits := reOnlyDigits.ReplaceAllString(key, "")
+		if strings.HasPrefix(digits, "55") && (len(digits) == 12 || len(digits) == 13) {
+			ddd := digits[2:4]
+			if ddd >= "11" && ddd <= "99" {
+				return "phone", true
+			}
+		}
+	}
+
+	// Check clean digits for unformatted CPF, CNPJ, or Phone
+	digits := reOnlyDigits.ReplaceAllString(key, "")
+
+	if len(digits) == 14 && isValidCNPJ(digits) {
+		return "cnpj", true
+	}
+
+	if len(digits) == 11 {
+		// If valid CPF checksum, prioritize CPF:
+		if isValidCPF(digits) {
+			return "cpf", true
+		}
+		// If 3rd digit is '9' and DDD is 11-99, it's a mobile phone without +55
+		ddd := digits[0:2]
+		if ddd >= "11" && ddd <= "99" && digits[2] == '9' {
+			return "phone", true
+		}
+	}
+
+	if len(digits) == 10 {
+		// Landline phone with DDD: (11) 3333-4444
+		ddd := digits[0:2]
+		if ddd >= "11" && ddd <= "99" {
+			return "phone", true
+		}
+	}
+
+	return "", false
+}
+
+// ExtractPixFromInteractive extracts verified Pix information if the interactive message carries a Pix key or payment.
+func ExtractPixFromInteractive(im *waE2E.InteractiveMessage) *PixPayload {
+	if im == nil {
+		return nil
+	}
+
+	// Context text: check if any part of the message mentions Pix
+	hasPixContext := false
+	var lowerTexts []string
+	if h := im.GetHeader(); h != nil {
+		lowerTexts = append(lowerTexts, strings.ToLower(h.GetTitle()), strings.ToLower(h.GetSubtitle()))
+	}
+	if b := im.GetBody(); b != nil {
+		lowerTexts = append(lowerTexts, strings.ToLower(b.GetText()))
+	}
+	if f := im.GetFooter(); f != nil {
+		lowerTexts = append(lowerTexts, strings.ToLower(f.GetText()))
+	}
+	for _, t := range lowerTexts {
+		if strings.Contains(t, "pix") {
+			hasPixContext = true
+			break
+		}
+	}
+
+	for _, btn := range im.GetNativeFlowMessage().GetButtons() {
+		if btn == nil || btn.GetName() != "cta_copy" {
+			continue
+		}
+		var params NativeFlowButtonParams
+		_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &params)
+
+		code := strings.TrimSpace(params.Copy)
+		if code == "" {
+			continue
+		}
+
+		pixType, valid := ValidateAndDetectPixType(code)
+		if !valid {
+			continue
+		}
+
+		btnLabelLower := strings.ToLower(params.DisplayText)
+		if pixType == "copia_e_cola" || hasPixContext || strings.Contains(btnLabelLower, "pix") {
+			label := params.DisplayText
+			if label == "" {
+				label = "Copiar chave Pix"
+			}
+			return &PixPayload{
+				Key:   code,
+				Type:  pixType,
+				Label: label,
+			}
+		}
+	}
+
+	if carousel := im.GetCarouselMessage(); carousel != nil {
+		for _, card := range carousel.GetCards() {
+			if pix := ExtractPixFromInteractive(card); pix != nil {
+				return pix
+			}
+		}
+	}
+
+	return nil
+}
+
+// ExtractButtonsFromInteractive extracts all buttons from an interactive message into structured DTOs.
+func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveButtonPayload {
+	if im == nil {
+		return nil
+	}
+	var buttons []InteractiveButtonPayload
+
+	for _, btn := range im.GetNativeFlowMessage().GetButtons() {
+		if btn == nil {
+			continue
+		}
+		name := btn.GetName()
+		var params NativeFlowButtonParams
+		_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &params)
+
+		label := params.DisplayText
+		if label == "" {
+			label = params.Title
+		}
+
+		item := InteractiveButtonPayload{
+			Type:  name,
+			Label: label,
+		}
+
+		switch name {
+		case "cta_copy":
+			item.Value = params.Copy
+		case "cta_url":
+			item.URL = params.URL
+		case "cta_call":
+			item.Phone = params.PhoneNumber
+		case "quick_reply":
+			item.ID = params.ID
+		case "flow":
+			item.ID = params.FlowID
+		case "review_and_pay", "payment_info":
+			item.Type = "payment"
+			if item.Label == "" {
+				item.Label = "Pagar pedido"
+			}
+		}
+
+		buttons = append(buttons, item)
+	}
+
+	if carousel := im.GetCarouselMessage(); carousel != nil {
+		for _, card := range carousel.GetCards() {
+			buttons = append(buttons, ExtractButtonsFromInteractive(card)...)
+		}
+	}
+
+	return buttons
+}
+
+// FormatInteractiveMessageSummary renders an InteractiveMessage as human-readable plain text.
+func FormatInteractiveMessageSummary(im *waE2E.InteractiveMessage) string {
+	if im == nil {
+		return ""
+	}
+	var parts []string
+
+	if header := im.GetHeader(); header != nil {
+		if title := header.GetTitle(); title != "" {
+			parts = append(parts, title)
+		}
+		if subtitle := header.GetSubtitle(); subtitle != "" {
+			parts = append(parts, subtitle)
+		}
+		if caption := interactiveHeaderMediaCaption(header); caption != "" {
+			parts = append(parts, caption)
+		}
+	}
+	if body := im.GetBody(); body != nil {
+		if text := body.GetText(); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if footer := im.GetFooter(); footer != nil {
+		if text := footer.GetText(); text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	for _, button := range im.GetNativeFlowMessage().GetButtons() {
+		if line := FormatNativeFlowButton(button); line != "" {
+			parts = append(parts, line)
+		}
+	}
+
+	if carousel := im.GetCarouselMessage(); carousel != nil {
+		for i, card := range carousel.GetCards() {
+			if cardSummary := FormatInteractiveMessageSummary(card); cardSummary != "" && cardSummary != "Interactive message" {
+				parts = append(parts, fmt.Sprintf("Card %d: %s", i+1, cardSummary))
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return "Interactive message"
+	}
+	return strings.Join(parts, "\n")
+}
+
+func interactiveHeaderMediaCaption(header *waE2E.InteractiveMessage_Header) string {
+	if header == nil {
+		return ""
+	}
+	if img := header.GetImageMessage(); img != nil {
+		return img.GetCaption()
+	}
+	if vid := header.GetVideoMessage(); vid != nil {
+		return vid.GetCaption()
+	}
+	if doc := header.GetDocumentMessage(); doc != nil {
+		return doc.GetCaption()
+	}
+	return ""
+}
+
+// FormatNativeFlowButton renders a single NativeFlowButton to text.
+func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) string {
+	if button == nil {
+		return ""
+	}
+	name := button.GetName()
+
+	var params NativeFlowButtonParams
+	_ = json.Unmarshal([]byte(button.GetButtonParamsJSON()), &params)
+
+	switch name {
+	case "cta_url":
+		label := params.DisplayText
+		if label == "" {
+			label = "Link"
+		}
+		if params.URL != "" {
+			return fmt.Sprintf("🔗 %s: %s", label, params.URL)
+		}
+	case "cta_call":
+		label := params.DisplayText
+		if label == "" {
+			label = "Call"
+		}
+		if params.PhoneNumber != "" {
+			return fmt.Sprintf("📞 %s: %s", label, params.PhoneNumber)
+		}
+	case "cta_copy":
+		label := params.DisplayText
+		if label == "" {
+			label = "Copy code"
+		}
+		if params.Copy != "" {
+			return fmt.Sprintf("📋 %s: %s", label, params.Copy)
+		}
+	case "quick_reply":
+		label := params.DisplayText
+		if label == "" {
+			label = params.Title
+		}
+		if label != "" {
+			return fmt.Sprintf("🔘 [%s]", label)
+		}
+	}
+
+	label := params.DisplayText
+	if label == "" {
+		label = params.Title
+	}
+	if label != "" {
+		return fmt.Sprintf("[%s] %s", name, label)
+	}
+	return fmt.Sprintf("[%s]", name)
+}
+
+// ExtractInteractiveResponseText extracts user response text from an InteractiveResponseMessage.
+func ExtractInteractiveResponseText(ir *waE2E.InteractiveResponseMessage) string {
+	if ir == nil {
+		return ""
+	}
+	if body := ir.GetBody(); body != nil && body.GetText() != "" {
+		return body.GetText()
+	}
+	if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
+		var params struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal([]byte(nf.GetParamsJSON()), &params)
+		if params.Title != "" {
+			return params.Title
+		}
+		if params.ID != "" {
+			return params.ID
+		}
+		if nf.GetName() != "" {
+			return nf.GetName()
+		}
+	}
+	return "Button response"
+}
+
+// ExtractButtonResponse extracts structured button response details from an InteractiveResponseMessage.
+func ExtractButtonResponse(ir *waE2E.InteractiveResponseMessage) *ButtonResponsePayload {
+	if ir == nil {
+		return nil
+	}
+	resp := &ButtonResponsePayload{
+		Type: "interactive_response",
+	}
+	if body := ir.GetBody(); body != nil && body.GetText() != "" {
+		resp.Title = body.GetText()
+	}
+	if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
+		if nf.GetName() != "" {
+			resp.Type = nf.GetName()
+		}
+		var params struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal([]byte(nf.GetParamsJSON()), &params)
+		if params.ID != "" {
+			resp.ID = params.ID
+		}
+		if params.Title != "" && resp.Title == "" {
+			resp.Title = params.Title
+		}
+	}
+	return resp
+}
+
+// FormatPaymentRequestSummary formats a RequestPaymentMessage into a human-readable text.
+func FormatPaymentRequestSummary(req *waE2E.RequestPaymentMessage) string {
+	if req == nil {
+		return ""
+	}
+	parts := []string{}
+	currency := req.GetCurrencyCodeIso4217()
+	amount1000 := req.GetAmount1000()
+	if currency != "" && amount1000 > 0 {
+		parts = append(parts, fmt.Sprintf("💰 Payment request: %s %.2f", currency, float64(amount1000)/1000.0))
+	} else {
+		parts = append(parts, "💰 Payment request")
+	}
+	if note := req.GetNoteMessage(); note != nil {
+		if noteText := ExtractMessageTextFromProto(note); noteText != "" {
+			parts = append(parts, noteText)
+		}
+	}
+	return strings.Join(parts, " - ")
+}
+
+// FormatSendPaymentSummary formats a SendPaymentMessage into a human-readable text.
+func FormatSendPaymentSummary(send *waE2E.SendPaymentMessage) string {
+	if send == nil {
+		return ""
+	}
+	parts := []string{"💰 Payment sent"}
+	if note := send.GetNoteMessage(); note != nil {
+		if noteText := ExtractMessageTextFromProto(note); noteText != "" {
+			parts = append(parts, noteText)
+		}
+	}
+	return strings.Join(parts, " - ")
+}
+
+// ExtractPaymentRequest extracts structured payment request details from a RequestPaymentMessage.
+func ExtractPaymentRequest(req *waE2E.RequestPaymentMessage) *PaymentRequestPayload {
+	if req == nil {
+		return nil
+	}
+	p := &PaymentRequestPayload{
+		Currency:        req.GetCurrencyCodeIso4217(),
+		Amount1000:      req.GetAmount1000(),
+		RequestFrom:     req.GetRequestFrom(),
+		ExpiryTimestamp: req.GetExpiryTimestamp(),
+	}
+	if p.Amount1000 > 0 {
+		p.Amount = float64(p.Amount1000) / 1000.0
+	}
+	if note := req.GetNoteMessage(); note != nil {
+		p.Note = ExtractMessageTextFromProto(note)
+	}
+	return p
 }
 
 // ExtractPollCreationMessage returns the poll creation payload regardless of

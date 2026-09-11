@@ -1477,35 +1477,53 @@ func GetMessageDigestOrSignature(msg, key []byte) (string, error) {
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-// UnwrapMessage unwraps FutureProof wrappers (ephemeral, view-once, etc.)
-// to access the inner message content. WhatsApp wraps messages in these
-// containers when disappearing messages or view-once is enabled.
-// The original message is not modified; the unwrapped inner message is returned.
+// UnwrapMessage unwraps FutureProof wrappers (ephemeral, view-once, document
+// with caption, etc.) to access the inner message content. WhatsApp wraps
+// messages in these containers when disappearing messages or view-once is
+// enabled, and captioned documents always arrive wrapped.
+//
+// Live events are already unwrapped by whatsmeow (events.Message.UnwrapRaw);
+// this matters for raw messages such as history sync, which still carry every
+// layer. The set of wrappers mirrors UnwrapRaw, minus EditedMessage, which
+// callers handle as a protocol message. The original message is not modified;
+// the unwrapped inner message is returned.
 func UnwrapMessage(msg *waE2E.Message) *waE2E.Message {
 	if msg == nil {
 		return msg
 	}
 	inner := msg
-	for i := 0; i < 3; i++ { // safeguard against excessively nested wrappers
-		if vm := inner.GetViewOnceMessage(); vm != nil && vm.GetMessage() != nil {
-			inner = vm.GetMessage()
-			continue
+	// Real stacks are at most a few layers deep (e.g. device-sent > ephemeral
+	// > view-once); the bound only guards against pathological nesting.
+	for i := 0; i < 8; i++ {
+		next := unwrapMessageOnce(inner)
+		if next == nil {
+			break
 		}
-		if em := inner.GetEphemeralMessage(); em != nil && em.GetMessage() != nil {
-			inner = em.GetMessage()
-			continue
-		}
-		if vm2 := inner.GetViewOnceMessageV2(); vm2 != nil && vm2.GetMessage() != nil {
-			inner = vm2.GetMessage()
-			continue
-		}
-		if vm2e := inner.GetViewOnceMessageV2Extension(); vm2e != nil && vm2e.GetMessage() != nil {
-			inner = vm2e.GetMessage()
-			continue
-		}
-		break
+		inner = next
 	}
 	return inner
+}
+
+// unwrapMessageOnce peels a single wrapper layer, or returns nil when msg is
+// not a wrapper.
+func unwrapMessageOnce(msg *waE2E.Message) *waE2E.Message {
+	switch {
+	case msg.GetDeviceSentMessage().GetMessage() != nil:
+		return msg.GetDeviceSentMessage().GetMessage()
+	case msg.GetEphemeralMessage().GetMessage() != nil:
+		return msg.GetEphemeralMessage().GetMessage()
+	case msg.GetViewOnceMessage().GetMessage() != nil:
+		return msg.GetViewOnceMessage().GetMessage()
+	case msg.GetViewOnceMessageV2().GetMessage() != nil:
+		return msg.GetViewOnceMessageV2().GetMessage()
+	case msg.GetViewOnceMessageV2Extension().GetMessage() != nil:
+		return msg.GetViewOnceMessageV2Extension().GetMessage()
+	case msg.GetDocumentWithCaptionMessage().GetMessage() != nil:
+		return msg.GetDocumentWithCaptionMessage().GetMessage()
+	case msg.GetLottieStickerMessage().GetMessage() != nil:
+		return msg.GetLottieStickerMessage().GetMessage()
+	}
+	return nil
 }
 
 // BuildEventMessage builds event message structure

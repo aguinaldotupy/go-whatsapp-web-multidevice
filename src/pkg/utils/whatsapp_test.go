@@ -934,6 +934,51 @@ func TestExtractMessageTextFromProtoInteractiveAndPayment(t *testing.T) {
 	})
 }
 
+func TestUnwrapMessage(t *testing.T) {
+	text := &waE2E.Message{Conversation: proto.String("inner")}
+	wrap := func(m *waE2E.Message) *waE2E.FutureProofMessage { return &waE2E.FutureProofMessage{Message: m} }
+
+	t.Run("peels four nested layers", func(t *testing.T) {
+		msg := &waE2E.Message{DeviceSentMessage: &waE2E.DeviceSentMessage{Message: &waE2E.Message{
+			EphemeralMessage: wrap(&waE2E.Message{
+				ViewOnceMessageV2: wrap(&waE2E.Message{
+					ViewOnceMessageV2Extension: wrap(text),
+				}),
+			}),
+		}}}
+		if got := UnwrapMessage(msg); got != text {
+			t.Fatalf("UnwrapMessage returned %v, want innermost text message", got)
+		}
+	})
+
+	t.Run("document with caption", func(t *testing.T) {
+		doc := &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: proto.String("Q3 report")}}
+		msg := &waE2E.Message{DocumentWithCaptionMessage: wrap(doc)}
+		if got := UnwrapMessage(msg); got != doc {
+			t.Fatalf("UnwrapMessage returned %v, want inner document", got)
+		}
+		if got := ExtractMessageTextFromProto(msg); got != "Q3 report" {
+			t.Fatalf("text = %q, want the document caption", got)
+		}
+	})
+
+	t.Run("plain message and nil are returned as-is", func(t *testing.T) {
+		if got := UnwrapMessage(text); got != text {
+			t.Fatalf("plain message changed: %v", got)
+		}
+		if got := UnwrapMessage(nil); got != nil {
+			t.Fatalf("nil returned %v", got)
+		}
+	})
+
+	t.Run("empty wrapper is not descended into", func(t *testing.T) {
+		msg := &waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{}}
+		if got := UnwrapMessage(msg); got != msg {
+			t.Fatalf("empty wrapper replaced by %v", got)
+		}
+	})
+}
+
 func TestPaymentRequestAmountSources(t *testing.T) {
 	money := func(value int64, offset uint32, currency string) *waE2E.Money {
 		return &waE2E.Money{Value: proto.Int64(value), Offset: proto.Uint32(offset), CurrencyCode: proto.String(currency)}

@@ -209,7 +209,7 @@ func payloadHasNoRenderableContent(payload map[string]any) bool {
 		"body",
 		"image", "audio", "video", "video_note", "document", "sticker",
 		"contact", "contacts_array", "list", "live_location", "location", "order",
-		"interactive", "buttons", "pix", "payment_request", "button_response",
+		"interactive", "buttons", "payment_request", "button_response",
 	}
 	for _, key := range renderableKeys {
 		if _, ok := payload[key]; ok {
@@ -587,9 +587,6 @@ func buildOtherMessageTypes(msg *waE2E.Message, payload map[string]any) {
 		payload["interactive"] = formatInteractiveMessageSummary(interactiveMessage)
 		if buttons := utils.ExtractButtonsFromInteractive(interactiveMessage); len(buttons) > 0 {
 			payload["buttons"] = buttons
-		}
-		if pix := utils.ExtractPixFromInteractive(interactiveMessage); pix != nil {
-			payload["pix"] = pix
 		}
 	}
 

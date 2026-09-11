@@ -556,8 +556,11 @@ CHATWOOT_IGNORE_JIDS=@g.us,628123456789@s.whatsapp.net
 | Video | ✅ | Displayed as attachments |
 | Documents | ✅ | Displayed as attachments |
 | Stickers | ✅ | Displayed as image attachments |
-| Location | ✅ | Shown as text with coordinates |
-| Contacts | ✅ | vCard information preserved |
+| Location | ✅ | Shown as text: name, address and a Google Maps link |
+| Contacts | ✅ | Shown as text: name and phone number |
+| Interactive (buttons, carousels) | ✅ | Shown as text: header, body, footer and each button's label with its URL, phone or copy code |
+| Button / list replies | ✅ | Shown as the selected option's text |
+| Payment request / sent | ✅ | Shown as text with currency, amount and note |
 
 **Outgoing messages (sent from your own WhatsApp device)** are automatically forwarded to Chatwoot as `outgoing` messages.
 

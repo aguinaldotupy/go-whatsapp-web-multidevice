@@ -200,7 +200,7 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 		}
 	}
 
-	// Check for interactive message (native flow buttons, pix, cta cards)
+	// Check for interactive message (native flow buttons, cta cards, carousels)
 	if im := msg.GetInteractiveMessage(); im != nil {
 		return FormatInteractiveMessageSummary(im)
 	}
@@ -287,13 +287,6 @@ type InteractiveButtonPayload struct {
 	ID    string `json:"id,omitempty"`
 }
 
-// PixPayload represents an identified and validated Pix key/payment from an interactive message.
-type PixPayload struct {
-	Key   string `json:"key"`
-	Type  string `json:"type"` // "cpf", "cnpj", "phone", "email", "evp", "copia_e_cola"
-	Label string `json:"label,omitempty"`
-}
-
 // ButtonResponsePayload represents the user's interaction/click on a button or flow.
 type ButtonResponsePayload struct {
 	ID    string `json:"id,omitempty"`
@@ -320,239 +313,6 @@ type NativeFlowButtonParams struct {
 	Title       string `json:"title"`
 	ID          string `json:"id"`
 	FlowID      string `json:"flow_id"`
-}
-
-var (
-	reOnlyDigits = regexp.MustCompile(`\D`)
-	reEmail      = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
-	reUUID       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	reCPFFormat  = regexp.MustCompile(`^\d{3}\.\d{3}\.\d{3}-\d{2}$`)
-	reCNPJFormat = regexp.MustCompile(`^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}$`)
-)
-
-func isValidCPF(cpf string) bool {
-	if len(cpf) != 11 {
-		return false
-	}
-	allSame := true
-	for i := 1; i < 11; i++ {
-		if cpf[i] != cpf[0] {
-			allSame = false
-			break
-		}
-	}
-	if allSame {
-		return false
-	}
-
-	sum := 0
-	for i := 0; i < 9; i++ {
-		sum += int(cpf[i]-'0') * (10 - i)
-	}
-	rem := sum % 11
-	d1 := 0
-	if rem >= 2 {
-		d1 = 11 - rem
-	}
-	if d1 != int(cpf[9]-'0') {
-		return false
-	}
-
-	sum = 0
-	for i := 0; i < 10; i++ {
-		sum += int(cpf[i]-'0') * (11 - i)
-	}
-	rem = sum % 11
-	d2 := 0
-	if rem >= 2 {
-		d2 = 11 - rem
-	}
-	return d2 == int(cpf[10]-'0')
-}
-
-func isValidCNPJ(cnpj string) bool {
-	if len(cnpj) != 14 {
-		return false
-	}
-	allSame := true
-	for i := 1; i < 14; i++ {
-		if cnpj[i] != cnpj[0] {
-			allSame = false
-			break
-		}
-	}
-	if allSame {
-		return false
-	}
-
-	weights1 := []int{5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
-	sum := 0
-	for i := 0; i < 12; i++ {
-		sum += int(cnpj[i]-'0') * weights1[i]
-	}
-	d1 := sum % 11
-	if d1 < 2 {
-		d1 = 0
-	} else {
-		d1 = 11 - d1
-	}
-	if d1 != int(cnpj[12]-'0') {
-		return false
-	}
-
-	weights2 := []int{6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2}
-	sum = 0
-	for i := 0; i < 13; i++ {
-		sum += int(cnpj[i]-'0') * weights2[i]
-	}
-	d2 := sum % 11
-	if d2 < 2 {
-		d2 = 0
-	} else {
-		d2 = 11 - d2
-	}
-	return d2 == int(cnpj[13]-'0')
-}
-
-// ValidateAndDetectPixType verifies if key is a valid Brazilian Pix key or EMV payload
-// and returns its detected type ("cpf", "cnpj", "phone", "email", "evp", "copia_e_cola").
-func ValidateAndDetectPixType(key string) (string, bool) {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return "", false
-	}
-
-	// 1. EMV Pix Copia e Cola
-	if strings.HasPrefix(key, "000201") && strings.Contains(key, "br.gov.bcb.pix") {
-		return "copia_e_cola", true
-	}
-
-	// 2. EVP (Chave aleatória - UUID)
-	if reUUID.MatchString(key) {
-		return "evp", true
-	}
-
-	// 3. E-mail
-	if reEmail.MatchString(key) {
-		return "email", true
-	}
-
-	// 4. Formatted CPF
-	if reCPFFormat.MatchString(key) {
-		return "cpf", true
-	}
-
-	// 5. Formatted CNPJ
-	if reCNPJFormat.MatchString(key) {
-		return "cnpj", true
-	}
-
-	// 6. Phone with country code (+55...)
-	if strings.HasPrefix(key, "+55") || strings.HasPrefix(key, "55") {
-		digits := reOnlyDigits.ReplaceAllString(key, "")
-		if strings.HasPrefix(digits, "55") && (len(digits) == 12 || len(digits) == 13) {
-			ddd := digits[2:4]
-			if ddd >= "11" && ddd <= "99" {
-				return "phone", true
-			}
-		}
-	}
-
-	// Check clean digits for unformatted CPF, CNPJ, or Phone
-	digits := reOnlyDigits.ReplaceAllString(key, "")
-
-	if len(digits) == 14 && isValidCNPJ(digits) {
-		return "cnpj", true
-	}
-
-	if len(digits) == 11 {
-		// If valid CPF checksum, prioritize CPF:
-		if isValidCPF(digits) {
-			return "cpf", true
-		}
-		// If 3rd digit is '9' and DDD is 11-99, it's a mobile phone without +55
-		ddd := digits[0:2]
-		if ddd >= "11" && ddd <= "99" && digits[2] == '9' {
-			return "phone", true
-		}
-	}
-
-	if len(digits) == 10 {
-		// Landline phone with DDD: (11) 3333-4444
-		ddd := digits[0:2]
-		if ddd >= "11" && ddd <= "99" {
-			return "phone", true
-		}
-	}
-
-	return "", false
-}
-
-// ExtractPixFromInteractive extracts verified Pix information if the interactive message carries a Pix key or payment.
-func ExtractPixFromInteractive(im *waE2E.InteractiveMessage) *PixPayload {
-	if im == nil {
-		return nil
-	}
-
-	// Context text: check if any part of the message mentions Pix
-	hasPixContext := false
-	var lowerTexts []string
-	if h := im.GetHeader(); h != nil {
-		lowerTexts = append(lowerTexts, strings.ToLower(h.GetTitle()), strings.ToLower(h.GetSubtitle()))
-	}
-	if b := im.GetBody(); b != nil {
-		lowerTexts = append(lowerTexts, strings.ToLower(b.GetText()))
-	}
-	if f := im.GetFooter(); f != nil {
-		lowerTexts = append(lowerTexts, strings.ToLower(f.GetText()))
-	}
-	for _, t := range lowerTexts {
-		if strings.Contains(t, "pix") {
-			hasPixContext = true
-			break
-		}
-	}
-
-	for _, btn := range im.GetNativeFlowMessage().GetButtons() {
-		if btn == nil || btn.GetName() != "cta_copy" {
-			continue
-		}
-		var params NativeFlowButtonParams
-		_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &params)
-
-		code := strings.TrimSpace(params.Copy)
-		if code == "" {
-			continue
-		}
-
-		pixType, valid := ValidateAndDetectPixType(code)
-		if !valid {
-			continue
-		}
-
-		btnLabelLower := strings.ToLower(params.DisplayText)
-		if pixType == "copia_e_cola" || hasPixContext || strings.Contains(btnLabelLower, "pix") {
-			label := params.DisplayText
-			if label == "" {
-				label = "Copiar chave Pix"
-			}
-			return &PixPayload{
-				Key:   code,
-				Type:  pixType,
-				Label: label,
-			}
-		}
-	}
-
-	if carousel := im.GetCarouselMessage(); carousel != nil {
-		for _, card := range carousel.GetCards() {
-			if pix := ExtractPixFromInteractive(card); pix != nil {
-				return pix
-			}
-		}
-	}
-
-	return nil
 }
 
 // ExtractButtonsFromInteractive extracts all buttons from an interactive message into structured DTOs.
@@ -594,7 +354,7 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 		case "review_and_pay", "payment_info":
 			item.Type = "payment"
 			if item.Label == "" {
-				item.Label = "Pagar pedido"
+				item.Label = "Pay order"
 			}
 		}
 

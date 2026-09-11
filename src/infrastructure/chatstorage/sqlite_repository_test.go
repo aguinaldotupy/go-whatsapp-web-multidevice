@@ -412,19 +412,19 @@ func TestSQLiteRepositoryCreateMessageStoresInteractiveMessage(t *testing.T) {
 				Sender:   senderJID,
 				IsFromMe: false,
 			},
-			ID:        "pix-msg-db-1",
+			ID:        "interactive-msg-db-1",
 			Timestamp: now,
 		},
 		Message: &waE2E.Message{
 			InteractiveMessage: &waE2E.InteractiveMessage{
-				Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Chave Pix")},
-				Body:   &waE2E.InteractiveMessage_Body{Text: proto.String("Pague via Pix")},
+				Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Your coupon")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: proto.String("Use it at checkout")},
 				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
 						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
 							{
 								Name:             proto.String("cta_copy"),
-								ButtonParamsJSON: proto.String(`{"display_text":"Copiar Pix","copy_code":"11144477735"}`),
+								ButtonParamsJSON: proto.String(`{"display_text":"Copy coupon","copy_code":"SAVE10"}`),
 							},
 						},
 					},
@@ -437,7 +437,7 @@ func TestSQLiteRepositoryCreateMessageStoresInteractiveMessage(t *testing.T) {
 		t.Fatalf("CreateMessage failed: %v", err)
 	}
 
-	msg, err := repo.GetMessageByID("pix-msg-db-1")
+	msg, err := repo.GetMessageByID("interactive-msg-db-1")
 	if err != nil {
 		t.Fatalf("GetMessageByID failed: %v", err)
 	}
@@ -447,8 +447,7 @@ func TestSQLiteRepositoryCreateMessageStoresInteractiveMessage(t *testing.T) {
 	if msg.ChatJID != chatJID.String() {
 		t.Errorf("ChatJID = %q, want %q", msg.ChatJID, chatJID.String())
 	}
-	if !strings.Contains(msg.Content, "Chave Pix") || !strings.Contains(msg.Content, "11144477735") {
-		t.Errorf("Content = %q, expected Pix and title", msg.Content)
+	if !strings.Contains(msg.Content, "Your coupon") || !strings.Contains(msg.Content, "SAVE10") {
+		t.Errorf("Content = %q, expected header title and copy code", msg.Content)
 	}
 }
-

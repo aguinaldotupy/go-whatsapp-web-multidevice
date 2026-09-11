@@ -1,2 +1,2 @@
-workspace = "atlantida-code"
-project = "gowa"
+workspace = "gowa-php"
+project = "gowa-forked"

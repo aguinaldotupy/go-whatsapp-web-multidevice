@@ -235,6 +235,11 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 		return doc.GetCaption()
 	}
 
+	// Check for video note (PTV) with caption
+	if ptv := msg.GetPtvMessage(); ptv != nil && ptv.GetCaption() != "" {
+		return ptv.GetCaption()
+	}
+
 	// Check for buttons response message
 	if buttonsResponse := msg.GetButtonsResponseMessage(); buttonsResponse != nil {
 		return buttonsResponse.GetSelectedDisplayText()

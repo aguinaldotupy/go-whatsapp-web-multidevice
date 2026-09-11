@@ -491,7 +491,14 @@ func buildChatwootMessageContent(data map[string]any, isGroup bool, fromName str
 	}
 	prefixGroupSender := isGroup && !fromMe && senderLabel != ""
 
-	if body, ok := data["body"].(string); ok && body != "" {
+	if interactive, ok := data["interactive"].(string); ok && interactive != "" {
+		// An interactive message's body is this same pre-rendered summary, but
+		// it carries button URLs and copy codes that must reach Chatwoot
+		// byte-exact: the markdown pass below would turn the underscores in a
+		// utm_source parameter, or the "***" inside a payment code, into
+		// emphasis. Use it verbatim instead.
+		content = interactive
+	} else if body, ok := data["body"].(string); ok && body != "" {
 		// Translate WhatsApp formatting (*bold*, _italic_, ~strike~) into the
 		// GitHub-flavored markdown Chatwoot renders so emphasis survives the hop.
 		content = utils.WhatsAppToChatwootMarkdown(body)
@@ -714,29 +721,6 @@ func extractStructuredMessageContent(data map[string]any) string {
 		// stored as the raw proto) so it survives the JSON round-trip on the
 		// Chatwoot forward retry path; see the comment at that call site.
 		return interactive
-	}
-
-	if pr, ok := data["payment_request"]; ok && pr != nil {
-		switch prm := pr.(type) {
-		case *utils.PaymentRequestPayload:
-			if prm.Currency != "" && prm.Amount > 0 {
-				if prm.Note != "" {
-					return fmt.Sprintf("💰 Payment request: %s %.2f - %s", prm.Currency, prm.Amount, prm.Note)
-				}
-				return fmt.Sprintf("💰 Payment request: %s %.2f", prm.Currency, prm.Amount)
-			}
-		case map[string]any:
-			currency, _ := prm["currency"].(string)
-			amount, _ := prm["amount"].(float64)
-			note, _ := prm["note"].(string)
-			if currency != "" && amount > 0 {
-				if note != "" {
-					return fmt.Sprintf("💰 Payment request: %s %.2f - %s", currency, amount, note)
-				}
-				return fmt.Sprintf("💰 Payment request: %s %.2f", currency, amount)
-			}
-		}
-		return "💰 Payment request"
 	}
 
 	return ""

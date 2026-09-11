@@ -664,6 +664,74 @@ func TestBuildEventPayloadInteractiveMultipleButtons(t *testing.T) {
 	assert.Equal(t, "https://example.com", buttons[1].URL)
 }
 
+// Runs an interactive message through the whole webhook-to-Chatwoot path. Its
+// body is the same summary as payload["interactive"]; Chatwoot must receive it
+// verbatim, because the markdown translation applied to plain bodies would turn
+// the underscores and asterisks in URLs and copy codes into emphasis.
+func TestChatwootContentKeepsInteractiveCodesVerbatim(t *testing.T) {
+	code := "ORDER_2026_0042***X"
+	link := "https://store.example/p?utm_source=wa&utm_medium=cta"
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("120363000000", types.GroupServer),
+				Sender:   types.NewJID("628111222333", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "CW-INTERACTIVE-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Body: &waE2E.InteractiveMessage_Body{Text: protoString("Your order")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             protoString("cta_copy"),
+								ButtonParamsJSON: protoString(`{"display_text":"Copy code","copy_code":"` + code + `"}`),
+							},
+							{
+								Name:             protoString("cta_url"),
+								ButtonParamsJSON: protoString(`{"display_text":"View order","url":"` + link + `"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+
+	content, _ := buildChatwootMessageContent(payload, true, "Alice")
+	assert.Equal(t, "Alice: Your order\n📋 Copy code: "+code+"\n🔗 View order: "+link, content)
+}
+
+func TestBuildEventPayloadVideoNoteCaption(t *testing.T) {
+	originalAutoDownload := config.WhatsappAutoDownloadMedia
+	config.WhatsappAutoDownloadMedia = false
+	defer func() { config.WhatsappAutoDownloadMedia = originalAutoDownload }()
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("123", types.DefaultUserServer),
+				Sender: types.NewJID("456", types.DefaultUserServer),
+			},
+			ID:        "PTV-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			PtvMessage: &waE2E.VideoMessage{Caption: protoString("see you soon")},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, "see you soon", payload["body"])
+}
+
 func TestBuildEventPayloadInteractiveResponse(t *testing.T) {
 	evt := &events.Message{
 		Info: types.MessageInfo{

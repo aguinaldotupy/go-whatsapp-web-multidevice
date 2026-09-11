@@ -491,6 +491,7 @@ func buildChatwootMessageContent(data map[string]any, isGroup bool, fromName str
 	}
 	prefixGroupSender := isGroup && !fromMe && senderLabel != ""
 
+	_, isButtonResponse := data["button_response"]
 	if interactive, ok := data["interactive"].(string); ok && interactive != "" {
 		// An interactive message's body is this same pre-rendered summary, but
 		// it carries button URLs and copy codes that must reach Chatwoot
@@ -498,6 +499,11 @@ func buildChatwootMessageContent(data map[string]any, isGroup bool, fromName str
 		// utm_source parameter, or the "***" inside a payment code, into
 		// emphasis. Use it verbatim instead.
 		content = interactive
+	} else if body, ok := data["body"].(string); ok && body != "" && isButtonResponse {
+		// A button reply's body falls back to the button id (opt_yes_1) when
+		// the reply carries no text; that id is the content and must not be
+		// read as _italic_ markup either.
+		content = body
 	} else if body, ok := data["body"].(string); ok && body != "" {
 		// Translate WhatsApp formatting (*bold*, _italic_, ~strike~) into the
 		// GitHub-flavored markdown Chatwoot renders so emphasis survives the hop.

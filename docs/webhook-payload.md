@@ -1428,7 +1428,7 @@ selected option's text.
 | `expiry_timestamp` | integer  | Request expiry, Unix seconds |
 | `note`             | string   | Plain text of the attached note |
 
-Each field is omitted when WhatsApp does not send it. Without both currency and amount, `body`
+Each field is omitted when WhatsApp does not send it. Unless both currency and amount are present, `body`
 is just `💰 Payment request` (plus the note, if any).
 
 ### Payment Sent Message

@@ -710,6 +710,38 @@ func TestChatwootContentKeepsInteractiveCodesVerbatim(t *testing.T) {
 	assert.Equal(t, "Alice: Your order\n📋 Copy code: "+code+"\n🔗 View order: "+link, content)
 }
 
+// A button reply without text falls back to its id as the body. Ids like
+// opt_yes_1 must reach Chatwoot untouched, not as opt*yes*1.
+func TestChatwootContentKeepsButtonResponseIDVerbatim(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("551199999999", types.DefaultUserServer),
+				Sender: types.NewJID("551188888888", types.DefaultUserServer),
+			},
+			ID:        "CW-RESP-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+				InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+					NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+						Name:       protoString("quick_reply"),
+						ParamsJSON: protoString(`{"id":"opt_yes_1"}`),
+					},
+				},
+			},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, "opt_yes_1", payload["body"])
+
+	content, _ := buildChatwootMessageContent(payload, false, "")
+	assert.Equal(t, "opt_yes_1", content)
+}
+
 func TestBuildEventPayloadVideoNoteCaption(t *testing.T) {
 	originalAutoDownload := config.WhatsappAutoDownloadMedia
 	config.WhatsappAutoDownloadMedia = false
@@ -769,6 +801,17 @@ func TestBuildEventPayloadRequestPaymentNormalizesRequestFromLID(t *testing.T) {
 	if assert.True(t, ok) {
 		assert.Equal(t, pn.String(), payReq.RequestFrom)
 	}
+
+	// A device suffix on the LID must not survive, so the value matches the
+	// non-AD form used by from/chat_id.
+	evt.Message.RequestPaymentMessage.RequestFrom = protoString(lid.User + ":7@" + types.HiddenUserServer)
+	_, payload, err = buildEventPayload(context.Background(), client, evt)
+	assert.NoError(t, err)
+	payReq, ok = payload["payment_request"].(*utils.PaymentRequestPayload)
+	if assert.True(t, ok) {
+		assert.Equal(t, pn.String(), payReq.RequestFrom)
+	}
+	evt.Message.RequestPaymentMessage.RequestFrom = protoString(lid.String())
 
 	// Without a resolvable mapping (nil client) the value is left untouched.
 	_, payload, err = buildEventPayload(context.Background(), nil, evt)

@@ -1960,9 +1960,11 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 		return fmt.Errorf("failed to store chat: %w", err)
 	}
 
-	// Extract message content and media info
-	content := utils.ExtractMessageTextFromProto(evt.Message)
-	mediaType, filename, mediaURL, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := utils.ExtractMediaInfo(evt.Message)
+	// Extract message content and media info from the same unwrapped message:
+	// ExtractMessageTextFromProto unwraps on its own, ExtractMediaInfo does not.
+	inner := utils.UnwrapMessage(evt.Message)
+	content := utils.ExtractMessageTextFromProto(inner)
+	mediaType, filename, mediaURL, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := utils.ExtractMediaInfo(inner)
 
 	// Skip if there's no content and no media
 	if content == "" && mediaType == "" {
@@ -2037,6 +2039,7 @@ func (r *SQLiteRepository) storeEditedMessage(ctx context.Context, evt *events.M
 	}
 
 	originalMessageID := key.GetID()
+	editedMessage = utils.UnwrapMessage(editedMessage)
 	newContent := utils.ExtractMessageTextFromProto(editedMessage)
 	now := time.Now()
 

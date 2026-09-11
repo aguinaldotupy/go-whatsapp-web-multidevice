@@ -1026,10 +1026,20 @@ func TestPaymentRequestAmountSources(t *testing.T) {
 			wantAmount:   5,
 		},
 		{
-			name:         "money with zero offset is ignored entirely",
+			name: "money currency fills in for legacy amount when iso code is empty",
+			req: &waE2E.RequestPaymentMessage{
+				Amount1000: proto.Uint64(2550),
+				Amount:     money(2550, 1000, "BRL"),
+			},
+			wantSummary:  "💰 Payment request: BRL 2.55",
+			wantCurrency: "BRL",
+			wantAmount:   2.55,
+		},
+		{
+			name:         "money with zero offset yields no amount",
 			req:          &waE2E.RequestPaymentMessage{Amount: money(2550, 0, "BRL")},
 			wantSummary:  "💰 Payment request",
-			wantCurrency: "",
+			wantCurrency: "BRL",
 			wantAmount:   0,
 		},
 	}

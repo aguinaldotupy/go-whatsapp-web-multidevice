@@ -583,13 +583,14 @@ func paymentNoteText(note *waE2E.Message) string {
 // only fills in when the ISO field is empty.
 func paymentRequestAmount(req *waE2E.RequestPaymentMessage) (currency string, amount float64) {
 	currency = req.GetCurrencyCodeIso4217()
+	money := req.GetAmount()
+	if currency == "" {
+		currency = money.GetCurrencyCode()
+	}
 	if amount1000 := req.GetAmount1000(); amount1000 > 0 {
 		return currency, float64(amount1000) / 1000.0
 	}
-	if money := req.GetAmount(); money != nil && money.GetOffset() > 0 && money.GetValue() > 0 {
-		if currency == "" {
-			currency = money.GetCurrencyCode()
-		}
+	if money.GetOffset() > 0 && money.GetValue() > 0 {
 		return currency, float64(money.GetValue()) / float64(money.GetOffset())
 	}
 	return currency, 0

@@ -51,7 +51,10 @@ func (s *chatDisplayNameLIDStore) PutLIDMapping(context.Context, types.JID, type
 
 func (s *chatDisplayNameLIDStore) GetPNForLID(_ context.Context, lid types.JID) (types.JID, error) {
 	if lid.ToNonAD() == s.lid.ToNonAD() {
-		return s.pn, nil
+		// Like whatsmeow's store, keep the device part of the queried JID.
+		pn := s.pn
+		pn.Device = lid.Device
+		return pn, nil
 	}
 	return types.EmptyJID, nil
 }

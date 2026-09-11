@@ -601,7 +601,7 @@ func buildOtherMessageTypes(ctx context.Context, client *whatsmeow.Client, msg *
 			// request_from comes straight from the proto; resolve @lid the
 			// same way from/chat_id are, so consumers see one JID format.
 			if jid, err := types.ParseJID(paymentReq.RequestFrom); err == nil && jid.Server == types.HiddenUserServer {
-				paymentReq.RequestFrom = NormalizeJIDFromLID(ctx, jid, client).String()
+				paymentReq.RequestFrom = NormalizeJIDFromLID(ctx, jid, client).ToNonAD().String()
 			}
 			payload["payment_request"] = paymentReq
 		}

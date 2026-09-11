@@ -1348,7 +1348,8 @@ flows, carousels) arrive as an interactive message:
 | `phone`   | string   | Number dialed by a `cta_call` button |
 | `id`      | string   | Reply ID of a `quick_reply` button, or flow ID of a `flow` button |
 
-Fields that do not apply to a button type are omitted.
+Fields that do not apply to a button type are omitted. A button with neither a name nor
+any text is skipped.
 
 A `cta_copy` `value` is passed through as sent, without interpretation: the same button type
 carries coupon codes (as in the example above), order numbers and payment keys such as a
@@ -1421,11 +1422,11 @@ selected option's text.
 | **Field**          | **Type** | **Description** |
 |--------------------|----------|-----------------|
 | `currency`         | string   | ISO 4217 currency code |
-| `amount_1000`      | integer  | Amount in thousandths of the currency unit, as sent by WhatsApp |
-| `amount`           | number   | `amount_1000 / 1000` |
-| `request_from`     | string   | JID the payment is requested from |
+| `amount_1000`      | integer  | Legacy amount in thousandths of the currency unit, as sent by WhatsApp. Omitted when the client only sends the newer `amount` field. |
+| `amount`           | number   | `amount_1000 / 1000`; when `amount_1000` is absent, `value / offset` of the newer WhatsApp `Money` amount (with its currency, if the ISO code is missing) |
+| `request_from`     | string   | JID the payment is requested from, resolved from `@lid` to the phone JID like `from` |
 | `expiry_timestamp` | integer  | Request expiry, Unix seconds |
-| `note`             | string   | Text of the attached note |
+| `note`             | string   | Plain text of the attached note |
 
 Each field is omitted when WhatsApp does not send it. Without both currency and amount, `body`
 is just `💰 Payment request` (plus the note, if any).

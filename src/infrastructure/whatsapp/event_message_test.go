@@ -14,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func TestBuildEventPayloadIncludesIsFromMe(t *testing.T) {
@@ -730,6 +731,52 @@ func TestBuildEventPayloadVideoNoteCaption(t *testing.T) {
 	_, payload, err := buildEventPayload(context.Background(), nil, evt)
 	assert.NoError(t, err)
 	assert.Equal(t, "see you soon", payload["body"])
+}
+
+// request_from is read straight from the proto; when it is a LID it must be
+// resolved to the phone JID like from/chat_id are.
+func TestBuildEventPayloadRequestPaymentNormalizesRequestFromLID(t *testing.T) {
+	originalLog := log
+	log = waLog.Noop
+	defer func() { log = originalLog }()
+
+	lid := types.NewJID("123456789012345", types.HiddenUserServer)
+	pn := types.NewJID("628123456789", types.DefaultUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{
+		LIDs: &chatDisplayNameLIDStore{lid: lid, pn: pn},
+	}}
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("551199999999", types.DefaultUserServer),
+				Sender: types.NewJID("551188888888", types.DefaultUserServer),
+			},
+			ID:        "PAY-LID-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: protoString("BRL"),
+				Amount1000:          protoUint64(5000),
+				RequestFrom:         protoString(lid.String()),
+			},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), client, evt)
+	assert.NoError(t, err)
+	payReq, ok := payload["payment_request"].(*utils.PaymentRequestPayload)
+	if assert.True(t, ok) {
+		assert.Equal(t, pn.String(), payReq.RequestFrom)
+	}
+
+	// Without a resolvable mapping (nil client) the value is left untouched.
+	_, payload, err = buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	payReq, ok = payload["payment_request"].(*utils.PaymentRequestPayload)
+	if assert.True(t, ok) {
+		assert.Equal(t, lid.String(), payReq.RequestFrom)
+	}
 }
 
 func TestBuildEventPayloadInteractiveResponse(t *testing.T) {

@@ -346,7 +346,7 @@ func buildOptionalFields(ctx context.Context, client *whatsmeow.Client, evt *eve
 		return err
 	}
 
-	buildOtherMessageTypes(msg, payload)
+	buildOtherMessageTypes(ctx, client, msg, payload)
 
 	return nil
 }
@@ -546,7 +546,7 @@ func buildAutoDownloadPayload(extracted utils.ExtractedMedia) any {
 	return extracted.MediaPath
 }
 
-func buildOtherMessageTypes(msg *waE2E.Message, payload map[string]any) {
+func buildOtherMessageTypes(ctx context.Context, client *whatsmeow.Client, msg *waE2E.Message, payload map[string]any) {
 	if contactMessage := msg.GetContactMessage(); contactMessage != nil {
 		payload["contact"] = buildWebhookContactPayload(contactMessage)
 	}
@@ -598,6 +598,11 @@ func buildOtherMessageTypes(msg *waE2E.Message, payload map[string]any) {
 
 	if reqPayment := msg.GetRequestPaymentMessage(); reqPayment != nil {
 		if paymentReq := utils.ExtractPaymentRequest(reqPayment); paymentReq != nil {
+			// request_from comes straight from the proto; resolve @lid the
+			// same way from/chat_id are, so consumers see one JID format.
+			if jid, err := types.ParseJID(paymentReq.RequestFrom); err == nil && jid.Server == types.HiddenUserServer {
+				paymentReq.RequestFrom = NormalizeJIDFromLID(ctx, jid, client).String()
+			}
 			payload["payment_request"] = paymentReq
 		}
 	}

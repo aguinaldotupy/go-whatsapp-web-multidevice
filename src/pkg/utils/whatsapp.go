@@ -339,6 +339,11 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 		if label == "" {
 			label = params.Title
 		}
+		if name == "" && label == "" {
+			// Nothing to identify the button by; an empty {"type":""} entry
+			// would only confuse consumers.
+			continue
+		}
 
 		item := InteractiveButtonPayload{
 			Type:  name,
@@ -489,10 +494,15 @@ func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_N
 	if label == "" {
 		label = params.Title
 	}
-	if label != "" {
+	switch {
+	case name != "" && label != "":
 		return fmt.Sprintf("[%s] %s", name, label)
+	case name != "":
+		return fmt.Sprintf("[%s]", name)
+	case label != "":
+		return fmt.Sprintf("[%s]", label)
 	}
-	return fmt.Sprintf("[%s]", name)
+	return ""
 }
 
 // ExtractInteractiveResponseText extracts user response text from an InteractiveResponseMessage.
@@ -552,23 +562,52 @@ func ExtractButtonResponse(ir *waE2E.InteractiveResponseMessage) *ButtonResponse
 	return resp
 }
 
+// paymentNoteText returns the plain text of a payment note. Notes are always
+// plain text, so only the text fields are read; going through
+// ExtractMessageTextFromProto would recurse back into payment handling for a
+// crafted note that nests another payment message.
+func paymentNoteText(note *waE2E.Message) string {
+	if note == nil {
+		return ""
+	}
+	if text := note.GetConversation(); text != "" {
+		return text
+	}
+	return note.GetExtendedTextMessage().GetText()
+}
+
+// paymentRequestAmount resolves a payment request's currency and amount.
+// amount1000 (field 2) is the legacy encoding; newer clients may send only the
+// Money amount (field 6), where the value is expressed in 1/offset units
+// (offset 1000 mirrors amount1000, the Cloud API uses 100). The Money currency
+// only fills in when the ISO field is empty.
+func paymentRequestAmount(req *waE2E.RequestPaymentMessage) (currency string, amount float64) {
+	currency = req.GetCurrencyCodeIso4217()
+	if amount1000 := req.GetAmount1000(); amount1000 > 0 {
+		return currency, float64(amount1000) / 1000.0
+	}
+	if money := req.GetAmount(); money != nil && money.GetOffset() > 0 && money.GetValue() > 0 {
+		if currency == "" {
+			currency = money.GetCurrencyCode()
+		}
+		return currency, float64(money.GetValue()) / float64(money.GetOffset())
+	}
+	return currency, 0
+}
+
 // FormatPaymentRequestSummary formats a RequestPaymentMessage into a human-readable text.
 func FormatPaymentRequestSummary(req *waE2E.RequestPaymentMessage) string {
 	if req == nil {
 		return ""
 	}
 	parts := []string{}
-	currency := req.GetCurrencyCodeIso4217()
-	amount1000 := req.GetAmount1000()
-	if currency != "" && amount1000 > 0 {
-		parts = append(parts, fmt.Sprintf("💰 Payment request: %s %.2f", currency, float64(amount1000)/1000.0))
+	if currency, amount := paymentRequestAmount(req); currency != "" && amount > 0 {
+		parts = append(parts, fmt.Sprintf("💰 Payment request: %s %.2f", currency, amount))
 	} else {
 		parts = append(parts, "💰 Payment request")
 	}
-	if note := req.GetNoteMessage(); note != nil {
-		if noteText := ExtractMessageTextFromProto(note); noteText != "" {
-			parts = append(parts, noteText)
-		}
+	if noteText := paymentNoteText(req.GetNoteMessage()); noteText != "" {
+		parts = append(parts, noteText)
 	}
 	return strings.Join(parts, " - ")
 }
@@ -579,10 +618,8 @@ func FormatSendPaymentSummary(send *waE2E.SendPaymentMessage) string {
 		return ""
 	}
 	parts := []string{"💰 Payment sent"}
-	if note := send.GetNoteMessage(); note != nil {
-		if noteText := ExtractMessageTextFromProto(note); noteText != "" {
-			parts = append(parts, noteText)
-		}
+	if noteText := paymentNoteText(send.GetNoteMessage()); noteText != "" {
+		parts = append(parts, noteText)
 	}
 	return strings.Join(parts, " - ")
 }
@@ -592,19 +629,15 @@ func ExtractPaymentRequest(req *waE2E.RequestPaymentMessage) *PaymentRequestPayl
 	if req == nil {
 		return nil
 	}
-	p := &PaymentRequestPayload{
-		Currency:        req.GetCurrencyCodeIso4217(),
+	currency, amount := paymentRequestAmount(req)
+	return &PaymentRequestPayload{
+		Currency:        currency,
 		Amount1000:      req.GetAmount1000(),
+		Amount:          amount,
 		RequestFrom:     req.GetRequestFrom(),
 		ExpiryTimestamp: req.GetExpiryTimestamp(),
+		Note:            paymentNoteText(req.GetNoteMessage()),
 	}
-	if p.Amount1000 > 0 {
-		p.Amount = float64(p.Amount1000) / 1000.0
-	}
-	if note := req.GetNoteMessage(); note != nil {
-		p.Note = ExtractMessageTextFromProto(note)
-	}
-	return p
 }
 
 // ExtractPollCreationMessage returns the poll creation payload regardless of

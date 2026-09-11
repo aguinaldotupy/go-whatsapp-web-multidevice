@@ -840,9 +840,17 @@ func TestExtractButtonsFromInteractive(t *testing.T) {
 		},
 	}
 
+	// A button with neither a name nor any label carries nothing a consumer
+	// could act on; it must not show up as {"type":""} or as "[]" in text.
+	im.GetNativeFlowMessage().Buttons = append(im.GetNativeFlowMessage().Buttons,
+		&waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{ButtonParamsJSON: proto.String(`{}`)})
+
 	buttons := ExtractButtonsFromInteractive(im)
 	if len(buttons) != 5 {
 		t.Fatalf("expected 5 buttons, got %d", len(buttons))
+	}
+	if got := FormatNativeFlowButton(im.GetNativeFlowMessage().Buttons[5]); got != "" {
+		t.Errorf("nameless button rendered as %q, want empty", got)
 	}
 
 	if buttons[0].Type != "cta_url" || buttons[0].URL != "https://example.com" {
@@ -924,4 +932,106 @@ func TestExtractMessageTextFromProtoInteractiveAndPayment(t *testing.T) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+}
+
+func TestPaymentRequestAmountSources(t *testing.T) {
+	money := func(value int64, offset uint32, currency string) *waE2E.Money {
+		return &waE2E.Money{Value: proto.Int64(value), Offset: proto.Uint32(offset), CurrencyCode: proto.String(currency)}
+	}
+	tests := []struct {
+		name         string
+		req          *waE2E.RequestPaymentMessage
+		wantSummary  string
+		wantCurrency string
+		wantAmount   float64
+	}{
+		{
+			name:         "money only, cloud api offset 100",
+			req:          &waE2E.RequestPaymentMessage{Amount: money(2550, 100, "BRL")},
+			wantSummary:  "💰 Payment request: BRL 25.50",
+			wantCurrency: "BRL",
+			wantAmount:   25.5,
+		},
+		{
+			name:         "money only, offset 1000",
+			req:          &waE2E.RequestPaymentMessage{Amount: money(12345, 1000, "USD")},
+			wantSummary:  "💰 Payment request: USD 12.35",
+			wantCurrency: "USD",
+			wantAmount:   12.345,
+		},
+		{
+			name: "amount1000 wins over money",
+			req: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: proto.String("EUR"),
+				Amount1000:          proto.Uint64(10000),
+				Amount:              money(99, 1, "BRL"),
+			},
+			wantSummary:  "💰 Payment request: EUR 10.00",
+			wantCurrency: "EUR",
+			wantAmount:   10,
+		},
+		{
+			name: "iso currency kept when money carries a different one",
+			req: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: proto.String("BRL"),
+				Amount:              money(500, 100, "USD"),
+			},
+			wantSummary:  "💰 Payment request: BRL 5.00",
+			wantCurrency: "BRL",
+			wantAmount:   5,
+		},
+		{
+			name:         "money with zero offset is ignored entirely",
+			req:          &waE2E.RequestPaymentMessage{Amount: money(2550, 0, "BRL")},
+			wantSummary:  "💰 Payment request",
+			wantCurrency: "",
+			wantAmount:   0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatPaymentRequestSummary(tt.req); got != tt.wantSummary {
+				t.Errorf("summary = %q, want %q", got, tt.wantSummary)
+			}
+			p := ExtractPaymentRequest(tt.req)
+			if p.Currency != tt.wantCurrency || p.Amount != tt.wantAmount {
+				t.Errorf("payload currency/amount = %q/%v, want %q/%v", p.Currency, p.Amount, tt.wantCurrency, tt.wantAmount)
+			}
+			if p.Amount1000 != tt.req.GetAmount1000() {
+				t.Errorf("amount_1000 = %d, want the raw proto value %d", p.Amount1000, tt.req.GetAmount1000())
+			}
+		})
+	}
+}
+
+// A note is plain text. A crafted note that nests another payment request must
+// not be followed: only the note's own text fields are read.
+func TestPaymentNoteIsNotExtractedRecursively(t *testing.T) {
+	nested := &waE2E.Message{RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+		CurrencyCodeIso4217: proto.String("BRL"),
+		Amount1000:          proto.Uint64(1000),
+		NoteMessage:         &waE2E.Message{Conversation: proto.String("inner")},
+	}}
+	req := &waE2E.RequestPaymentMessage{
+		CurrencyCodeIso4217: proto.String("BRL"),
+		Amount1000:          proto.Uint64(2000),
+		NoteMessage:         nested,
+	}
+	if got := FormatPaymentRequestSummary(req); got != "💰 Payment request: BRL 2.00" {
+		t.Errorf("summary = %q, want no note", got)
+	}
+	if got := ExtractPaymentRequest(req).Note; got != "" {
+		t.Errorf("note = %q, want empty", got)
+	}
+
+	extended := &waE2E.RequestPaymentMessage{
+		NoteMessage: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("for the tickets")}},
+	}
+	if got := FormatPaymentRequestSummary(extended); got != "💰 Payment request - for the tickets" {
+		t.Errorf("summary = %q, want extended text note", got)
+	}
+	sent := &waE2E.SendPaymentMessage{NoteMessage: nested}
+	if got := FormatSendPaymentSummary(sent); got != "💰 Payment sent" {
+		t.Errorf("send summary = %q, want no note", got)
+	}
 }

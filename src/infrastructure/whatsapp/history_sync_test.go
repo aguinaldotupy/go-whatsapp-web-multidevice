@@ -122,6 +122,111 @@ func TestProcessConversationMessagesPersistsPollDefinitionWithoutText(t *testing
 		repo.definition.UpdatedAt, wantTimestamp)
 }
 
+// History sync hands over raw messages, so in disappearing chats a captioned
+// image arrives still wrapped in an EphemeralMessage. Text and media must be
+// extracted from the same unwrapped message, or the caption is stored alone and
+// the image metadata is lost.
+func TestProcessConversationMessagesUnwrapsEphemeralMedia(t *testing.T) {
+	originalLog := log
+	log = waLog.Noop
+	defer func() { log = originalLog }()
+
+	deviceID := "device-a@s.whatsapp.net"
+	chatJID := "628123456789@s.whatsapp.net"
+	repo := &historyMessageRepoSpy{}
+	ctx := ContextWithDevice(context.Background(), NewDeviceInstance(deviceID, nil, nil))
+	syncType := waHistorySync.HistorySync_RECENT
+	timestamp := uint64(time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC).Unix())
+	data := &waHistorySync.HistorySync{
+		SyncType: &syncType,
+		Conversations: []*waHistorySync.Conversation{{
+			ID: proto.String(chatJID),
+			Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{
+				Key: &waCommon.MessageKey{RemoteJID: proto.String(chatJID), ID: proto.String("EPHEMERAL-IMG-1")},
+				Message: &waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{
+					Message: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+						Caption:    proto.String("holiday photo"),
+						DirectPath: proto.String("/v/t62.7118-24/photo.enc"),
+					}},
+				}},
+				MessageTimestamp: &timestamp,
+			}}},
+		}},
+	}
+
+	if err := processConversationMessages(ctx, data, repo, nil); err != nil {
+		t.Fatalf("processConversationMessages: %v", err)
+	}
+	if assert.Len(t, repo.messages, 1) {
+		stored := repo.messages[0]
+		assert.Equal(t, "holiday photo", stored.Content)
+		assert.Equal(t, "image", stored.MediaType)
+		assert.Equal(t, "/v/t62.7118-24/photo.enc", stored.DirectPath)
+	}
+}
+
+// Captioned documents always arrive wrapped in DocumentWithCaptionMessage; in
+// history sync nothing unwraps them before us, so without handling the wrapper
+// the message had neither text nor media and was dropped.
+func TestProcessConversationMessagesUnwrapsDocumentWithCaption(t *testing.T) {
+	originalLog := log
+	log = waLog.Noop
+	defer func() { log = originalLog }()
+
+	deviceID := "device-a@s.whatsapp.net"
+	chatJID := "628123456789@s.whatsapp.net"
+	repo := &historyMessageRepoSpy{}
+	ctx := ContextWithDevice(context.Background(), NewDeviceInstance(deviceID, nil, nil))
+	syncType := waHistorySync.HistorySync_RECENT
+	timestamp := uint64(time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC).Unix())
+	data := &waHistorySync.HistorySync{
+		SyncType: &syncType,
+		Conversations: []*waHistorySync.Conversation{{
+			ID: proto.String(chatJID),
+			Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{
+				Key: &waCommon.MessageKey{RemoteJID: proto.String(chatJID), ID: proto.String("DOC-CAPTION-1")},
+				Message: &waE2E.Message{DocumentWithCaptionMessage: &waE2E.FutureProofMessage{
+					Message: &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+						Caption:    proto.String("Q3 report"),
+						FileName:   proto.String("q3.pdf"),
+						DirectPath: proto.String("/v/t62.7119-24/q3.enc"),
+					}},
+				}},
+				MessageTimestamp: &timestamp,
+			}}},
+		}},
+	}
+
+	if err := processConversationMessages(ctx, data, repo, nil); err != nil {
+		t.Fatalf("processConversationMessages: %v", err)
+	}
+	if assert.Len(t, repo.messages, 1) {
+		stored := repo.messages[0]
+		assert.Equal(t, "Q3 report", stored.Content)
+		assert.Equal(t, "document", stored.MediaType)
+		assert.Equal(t, "/v/t62.7119-24/q3.enc", stored.DirectPath)
+	}
+}
+
+type historyMessageRepoSpy struct {
+	domainChatStorage.IChatStorageRepository
+	messages []*domainChatStorage.Message
+}
+
+func (r *historyMessageRepoSpy) StoreChat(*domainChatStorage.Chat) error { return nil }
+
+func (r *historyMessageRepoSpy) StoreMessagesBatch(messages []*domainChatStorage.Message) error {
+	r.messages = append(r.messages, messages...)
+	return nil
+}
+
+func (r *historyMessageRepoSpy) GetChatNameWithPushName(jid types.JID, _ string, _ string, pushName string) string {
+	if pushName != "" {
+		return pushName
+	}
+	return jid.String()
+}
+
 type historyReactionRepoSpy struct {
 	domainChatStorage.IChatStorageRepository
 	createReactionCalls int

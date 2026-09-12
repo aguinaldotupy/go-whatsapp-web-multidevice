@@ -209,6 +209,7 @@ func payloadHasNoRenderableContent(payload map[string]any) bool {
 		"body",
 		"image", "audio", "video", "video_note", "document", "sticker",
 		"contact", "contacts_array", "list", "live_location", "location", "order",
+		"interactive", "buttons", "payment_request", "button_response",
 	}
 	for _, key := range renderableKeys {
 		if _, ok := payload[key]; ok {
@@ -236,7 +237,11 @@ func hasRecognizedMessageType(msg *waE2E.Message) bool {
 		msg.GetListMessage() != nil,
 		msg.GetLiveLocationMessage() != nil,
 		msg.GetLocationMessage() != nil,
-		msg.GetOrderMessage() != nil:
+		msg.GetOrderMessage() != nil,
+		msg.GetInteractiveMessage() != nil,
+		msg.GetInteractiveResponseMessage() != nil,
+		msg.GetRequestPaymentMessage() != nil,
+		msg.GetSendPaymentMessage() != nil:
 		return true
 	default:
 		return false
@@ -305,11 +310,11 @@ func buildMessageBody(ctx context.Context, client *whatsmeow.Client, evt *events
 		payload["body"] = message.Text
 	}
 
-	// Fallback: extract caption from media messages if no text body was set
+	// Fallback: extract caption or text from other message types if no text body was set
 	if _, hasBody := payload["body"]; !hasBody {
 		msg := utils.UnwrapMessage(evt.Message)
-		if caption := utils.ExtractMediaCaption(msg); caption != "" {
-			payload["body"] = caption
+		if text := utils.ExtractMessageTextFromProto(msg); text != "" {
+			payload["body"] = text
 		}
 	}
 
@@ -341,7 +346,7 @@ func buildOptionalFields(ctx context.Context, client *whatsmeow.Client, evt *eve
 		return err
 	}
 
-	buildOtherMessageTypes(msg, payload)
+	buildOtherMessageTypes(ctx, client, msg, payload)
 
 	return nil
 }
@@ -541,7 +546,7 @@ func buildAutoDownloadPayload(extracted utils.ExtractedMedia) any {
 	return extracted.MediaPath
 }
 
-func buildOtherMessageTypes(msg *waE2E.Message, payload map[string]any) {
+func buildOtherMessageTypes(ctx context.Context, client *whatsmeow.Client, msg *waE2E.Message, payload map[string]any) {
 	if contactMessage := msg.GetContactMessage(); contactMessage != nil {
 		payload["contact"] = buildWebhookContactPayload(contactMessage)
 	}
@@ -580,6 +585,26 @@ func buildOtherMessageTypes(msg *waE2E.Message, payload map[string]any) {
 		// miss on retry and silently downgrade to the generic sentinel,
 		// losing the CTA label/URL/phone/code the live path just extracted.
 		payload["interactive"] = formatInteractiveMessageSummary(interactiveMessage)
+		if buttons := utils.ExtractButtonsFromInteractive(interactiveMessage); len(buttons) > 0 {
+			payload["buttons"] = buttons
+		}
+	}
+
+	if interactiveResponse := msg.GetInteractiveResponseMessage(); interactiveResponse != nil {
+		if btnResp := utils.ExtractButtonResponse(interactiveResponse); btnResp != nil {
+			payload["button_response"] = btnResp
+		}
+	}
+
+	if reqPayment := msg.GetRequestPaymentMessage(); reqPayment != nil {
+		if paymentReq := utils.ExtractPaymentRequest(reqPayment); paymentReq != nil {
+			// request_from comes straight from the proto; resolve @lid the
+			// same way from/chat_id are, so consumers see one JID format.
+			if jid, err := types.ParseJID(paymentReq.RequestFrom); err == nil && jid.Server == types.HiddenUserServer {
+				paymentReq.RequestFrom = NormalizeJIDFromLID(ctx, jid, client).ToNonAD().String()
+			}
+			payload["payment_request"] = paymentReq
+		}
 	}
 }
 

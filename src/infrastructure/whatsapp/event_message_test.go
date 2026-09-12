@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCommon"
@@ -13,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func TestBuildEventPayloadIncludesIsFromMe(t *testing.T) {
@@ -565,4 +567,333 @@ func TestBuildEventPayloadIncludesSenderDisplayName(t *testing.T) {
 			assert.Equal(t, tt.wantName, payload["sender_display_name"])
 		})
 	}
+}
+
+func TestBuildEventPayloadInteractiveCopyCode(t *testing.T) {
+	code := "PAY-7F3K9Q"
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "COPY-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: protoString("Your order")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: protoString("Copy the code below to pay")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             protoString("cta_copy"),
+								ButtonParamsJSON: protoString(`{"display_text":"Copy payment code","copy_code":"` + code + `"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	// Body fallback should contain formatted text
+	assert.Contains(t, payload["body"], "Your order")
+	assert.Contains(t, payload["body"], code)
+
+	// Interactive summary preserved
+	assert.NotEmpty(t, payload["interactive"])
+
+	// Buttons populated
+	buttons, ok := payload["buttons"].([]utils.InteractiveButtonPayload)
+	assert.True(t, ok, "buttons should be []utils.InteractiveButtonPayload")
+	assert.Len(t, buttons, 1)
+	assert.Equal(t, "cta_copy", buttons[0].Type)
+	// The copy code is passed through raw; interpreting it (coupon, payment
+	// key, ...) is left to the webhook consumer.
+	assert.Equal(t, code, buttons[0].Value)
+}
+
+func TestBuildEventPayloadInteractiveMultipleButtons(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "COUPON-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: protoString("Special discount")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: protoString("Use the coupon below")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             protoString("cta_copy"),
+								ButtonParamsJSON: protoString(`{"display_text":"Copy coupon","copy_code":"PROMO50"}`),
+							},
+							{
+								Name:             protoString("cta_url"),
+								ButtonParamsJSON: protoString(`{"display_text":"Visit store","url":"https://example.com"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	// Buttons populated
+	buttons, ok := payload["buttons"].([]utils.InteractiveButtonPayload)
+	assert.True(t, ok)
+	assert.Len(t, buttons, 2)
+	assert.Equal(t, "PROMO50", buttons[0].Value)
+	assert.Equal(t, "https://example.com", buttons[1].URL)
+}
+
+// Runs an interactive message through the whole webhook-to-Chatwoot path. Its
+// body is the same summary as payload["interactive"]; Chatwoot must receive it
+// verbatim, because the markdown translation applied to plain bodies would turn
+// the underscores and asterisks in URLs and copy codes into emphasis.
+func TestChatwootContentKeepsInteractiveCodesVerbatim(t *testing.T) {
+	code := "ORDER_2026_0042***X"
+	link := "https://store.example/p?utm_source=wa&utm_medium=cta"
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("120363000000", types.GroupServer),
+				Sender:   types.NewJID("628111222333", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "CW-INTERACTIVE-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Body: &waE2E.InteractiveMessage_Body{Text: protoString("Your order")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             protoString("cta_copy"),
+								ButtonParamsJSON: protoString(`{"display_text":"Copy code","copy_code":"` + code + `"}`),
+							},
+							{
+								Name:             protoString("cta_url"),
+								ButtonParamsJSON: protoString(`{"display_text":"View order","url":"` + link + `"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+
+	content, _ := buildChatwootMessageContent(payload, true, "Alice")
+	assert.Equal(t, "Alice: Your order\n📋 Copy code: "+code+"\n🔗 View order: "+link, content)
+}
+
+// A button reply without text falls back to its id as the body. Ids like
+// opt_yes_1 must reach Chatwoot untouched, not as opt*yes*1.
+func TestChatwootContentKeepsButtonResponseIDVerbatim(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("551199999999", types.DefaultUserServer),
+				Sender: types.NewJID("551188888888", types.DefaultUserServer),
+			},
+			ID:        "CW-RESP-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+				InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+					NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+						Name:       protoString("quick_reply"),
+						ParamsJSON: protoString(`{"id":"opt_yes_1"}`),
+					},
+				},
+			},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, "opt_yes_1", payload["body"])
+
+	content, _ := buildChatwootMessageContent(payload, false, "")
+	assert.Equal(t, "opt_yes_1", content)
+}
+
+func TestBuildEventPayloadVideoNoteCaption(t *testing.T) {
+	originalAutoDownload := config.WhatsappAutoDownloadMedia
+	config.WhatsappAutoDownloadMedia = false
+	defer func() { config.WhatsappAutoDownloadMedia = originalAutoDownload }()
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("123", types.DefaultUserServer),
+				Sender: types.NewJID("456", types.DefaultUserServer),
+			},
+			ID:        "PTV-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			PtvMessage: &waE2E.VideoMessage{Caption: protoString("see you soon")},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, "see you soon", payload["body"])
+}
+
+// request_from is read straight from the proto; when it is a LID it must be
+// resolved to the phone JID like from/chat_id are.
+func TestBuildEventPayloadRequestPaymentNormalizesRequestFromLID(t *testing.T) {
+	originalLog := log
+	log = waLog.Noop
+	defer func() { log = originalLog }()
+
+	lid := types.NewJID("123456789012345", types.HiddenUserServer)
+	pn := types.NewJID("628123456789", types.DefaultUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{
+		LIDs: &chatDisplayNameLIDStore{lid: lid, pn: pn},
+	}}
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:   types.NewJID("551199999999", types.DefaultUserServer),
+				Sender: types.NewJID("551188888888", types.DefaultUserServer),
+			},
+			ID:        "PAY-LID-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: protoString("BRL"),
+				Amount1000:          protoUint64(5000),
+				RequestFrom:         protoString(lid.String()),
+			},
+		},
+	}
+
+	_, payload, err := buildEventPayload(context.Background(), client, evt)
+	assert.NoError(t, err)
+	payReq, ok := payload["payment_request"].(*utils.PaymentRequestPayload)
+	if assert.True(t, ok) {
+		assert.Equal(t, pn.String(), payReq.RequestFrom)
+	}
+
+	// A device suffix on the LID must not survive, so the value matches the
+	// non-AD form used by from/chat_id.
+	evt.Message.RequestPaymentMessage.RequestFrom = protoString(lid.User + ":7@" + types.HiddenUserServer)
+	_, payload, err = buildEventPayload(context.Background(), client, evt)
+	assert.NoError(t, err)
+	payReq, ok = payload["payment_request"].(*utils.PaymentRequestPayload)
+	if assert.True(t, ok) {
+		assert.Equal(t, pn.String(), payReq.RequestFrom)
+	}
+	evt.Message.RequestPaymentMessage.RequestFrom = protoString(lid.String())
+
+	// Without a resolvable mapping (nil client) the value is left untouched.
+	_, payload, err = buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	payReq, ok = payload["payment_request"].(*utils.PaymentRequestPayload)
+	if assert.True(t, ok) {
+		assert.Equal(t, lid.String(), payReq.RequestFrom)
+	}
+}
+
+func TestBuildEventPayloadInteractiveResponse(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "RESP-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+				InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+					NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+						Name:       protoString("quick_reply"),
+						ParamsJSON: protoString(`{"id":"confirm_btn","title":"Confirm"}`),
+					},
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	assert.Equal(t, "Confirm", payload["body"])
+
+	btnResp, ok := payload["button_response"].(*utils.ButtonResponsePayload)
+	assert.True(t, ok, "button_response should be *utils.ButtonResponsePayload")
+	assert.NotNil(t, btnResp)
+	assert.Equal(t, "confirm_btn", btnResp.ID)
+	assert.Equal(t, "Confirm", btnResp.Title)
+}
+
+func TestBuildEventPayloadRequestPayment(t *testing.T) {
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     types.NewJID("551199999999", types.DefaultUserServer),
+				Sender:   types.NewJID("551188888888", types.DefaultUserServer),
+				IsFromMe: false,
+			},
+			ID:        "PAY-MSG-1",
+			Timestamp: time.Date(2026, time.March, 1, 10, 0, 0, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: protoString("BRL"),
+				Amount1000:          protoUint64(150000),
+				NoteMessage: &waE2E.Message{
+					Conversation: protoString("Service payment"),
+				},
+			},
+		},
+	}
+
+	eventType, payload, err := buildEventPayload(context.Background(), nil, evt)
+	assert.NoError(t, err)
+	assert.Equal(t, EventTypeMessage, eventType)
+
+	assert.Contains(t, payload["body"], "Payment request: BRL 150.00 - Service payment")
+
+	payReq, ok := payload["payment_request"].(*utils.PaymentRequestPayload)
+	assert.True(t, ok, "payment_request should be *utils.PaymentRequestPayload")
+	assert.NotNil(t, payReq)
+	assert.Equal(t, "BRL", payReq.Currency)
+	assert.Equal(t, float64(150), payReq.Amount)
+	assert.Equal(t, "Service payment", payReq.Note)
+}
+
+func protoUint64(v uint64) *uint64 {
+	return &v
 }

@@ -809,3 +809,284 @@ func TestExtractContextInfoInteractiveMessage(t *testing.T) {
 		}
 	})
 }
+
+func TestExtractButtonsFromInteractive(t *testing.T) {
+	im := &waE2E.InteractiveMessage{
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+					{
+						Name:             proto.String("cta_url"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Site","url":"https://example.com"}`),
+					},
+					{
+						Name:             proto.String("cta_call"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Call us","phone_number":"+5511999999999"}`),
+					},
+					{
+						Name:             proto.String("cta_copy"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Copy","copy_code":"SAVE10"}`),
+					},
+					{
+						Name:             proto.String("quick_reply"),
+						ButtonParamsJSON: proto.String(`{"display_text":"Confirm","id":"btn_ok"}`),
+					},
+					{
+						Name:             proto.String("single_select"),
+						ButtonParamsJSON: proto.String(`{"title":"Menu"}`),
+					},
+				},
+			},
+		},
+	}
+
+	// A button with neither a name nor any label carries nothing a consumer
+	// could act on; it must not show up as {"type":""} or as "[]" in text.
+	im.GetNativeFlowMessage().Buttons = append(im.GetNativeFlowMessage().Buttons,
+		&waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{ButtonParamsJSON: proto.String(`{}`)})
+
+	buttons := ExtractButtonsFromInteractive(im)
+	if len(buttons) != 5 {
+		t.Fatalf("expected 5 buttons, got %d", len(buttons))
+	}
+	if got := FormatNativeFlowButton(im.GetNativeFlowMessage().Buttons[5]); got != "" {
+		t.Errorf("nameless button rendered as %q, want empty", got)
+	}
+
+	if buttons[0].Type != "cta_url" || buttons[0].URL != "https://example.com" {
+		t.Errorf("button 0 mismatch: %+v", buttons[0])
+	}
+	if buttons[1].Type != "cta_call" || buttons[1].Phone != "+5511999999999" {
+		t.Errorf("button 1 mismatch: %+v", buttons[1])
+	}
+	if buttons[2].Type != "cta_copy" || buttons[2].Value != "SAVE10" {
+		t.Errorf("button 2 mismatch: %+v", buttons[2])
+	}
+	if buttons[3].Type != "quick_reply" || buttons[3].ID != "btn_ok" {
+		t.Errorf("button 3 mismatch: %+v", buttons[3])
+	}
+	if buttons[4].Type != "single_select" || buttons[4].Label != "Menu" {
+		t.Errorf("button 4 mismatch: %+v", buttons[4])
+	}
+}
+
+func TestExtractMessageTextFromProtoInteractiveAndPayment(t *testing.T) {
+	t.Run("extracts interactive message text", func(t *testing.T) {
+		msg := &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Your coupon")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: proto.String("Use it at checkout")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             proto.String("cta_copy"),
+								ButtonParamsJSON: proto.String(`{"display_text":"Copy coupon","copy_code":"SAVE10"}`),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		got := ExtractMessageTextFromProto(msg)
+		want := "Your coupon\nUse it at checkout\n📋 Copy coupon: SAVE10"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("extracts interactive response message text", func(t *testing.T) {
+		msg := &waE2E.Message{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+				InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+					NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+						Name:       proto.String("quick_reply"),
+						ParamsJSON: proto.String(`{"id":"btn_yes","title":"Yes, I confirm"}`),
+					},
+				},
+			},
+		}
+
+		got := ExtractMessageTextFromProto(msg)
+		want := "Yes, I confirm"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("extracts request payment message", func(t *testing.T) {
+		msg := &waE2E.Message{
+			RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: proto.String("BRL"),
+				Amount1000:          proto.Uint64(50000),
+				NoteMessage: &waE2E.Message{
+					Conversation: proto.String("Lunch"),
+				},
+			},
+		}
+
+		got := ExtractMessageTextFromProto(msg)
+		want := "💰 Payment request: BRL 50.00 - Lunch"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
+func TestUnwrapMessage(t *testing.T) {
+	text := &waE2E.Message{Conversation: proto.String("inner")}
+	wrap := func(m *waE2E.Message) *waE2E.FutureProofMessage { return &waE2E.FutureProofMessage{Message: m} }
+
+	t.Run("peels four nested layers", func(t *testing.T) {
+		msg := &waE2E.Message{DeviceSentMessage: &waE2E.DeviceSentMessage{Message: &waE2E.Message{
+			EphemeralMessage: wrap(&waE2E.Message{
+				ViewOnceMessageV2: wrap(&waE2E.Message{
+					ViewOnceMessageV2Extension: wrap(text),
+				}),
+			}),
+		}}}
+		if got := UnwrapMessage(msg); got != text {
+			t.Fatalf("UnwrapMessage returned %v, want innermost text message", got)
+		}
+	})
+
+	t.Run("document with caption", func(t *testing.T) {
+		doc := &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: proto.String("Q3 report")}}
+		msg := &waE2E.Message{DocumentWithCaptionMessage: wrap(doc)}
+		if got := UnwrapMessage(msg); got != doc {
+			t.Fatalf("UnwrapMessage returned %v, want inner document", got)
+		}
+		if got := ExtractMessageTextFromProto(msg); got != "Q3 report" {
+			t.Fatalf("text = %q, want the document caption", got)
+		}
+	})
+
+	t.Run("plain message and nil are returned as-is", func(t *testing.T) {
+		if got := UnwrapMessage(text); got != text {
+			t.Fatalf("plain message changed: %v", got)
+		}
+		if got := UnwrapMessage(nil); got != nil {
+			t.Fatalf("nil returned %v", got)
+		}
+	})
+
+	t.Run("empty wrapper is not descended into", func(t *testing.T) {
+		msg := &waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{}}
+		if got := UnwrapMessage(msg); got != msg {
+			t.Fatalf("empty wrapper replaced by %v", got)
+		}
+	})
+}
+
+func TestPaymentRequestAmountSources(t *testing.T) {
+	money := func(value int64, offset uint32, currency string) *waE2E.Money {
+		return &waE2E.Money{Value: proto.Int64(value), Offset: proto.Uint32(offset), CurrencyCode: proto.String(currency)}
+	}
+	tests := []struct {
+		name         string
+		req          *waE2E.RequestPaymentMessage
+		wantSummary  string
+		wantCurrency string
+		wantAmount   float64
+	}{
+		{
+			name:         "money only, cloud api offset 100",
+			req:          &waE2E.RequestPaymentMessage{Amount: money(2550, 100, "BRL")},
+			wantSummary:  "💰 Payment request: BRL 25.50",
+			wantCurrency: "BRL",
+			wantAmount:   25.5,
+		},
+		{
+			name:         "money only, offset 1000",
+			req:          &waE2E.RequestPaymentMessage{Amount: money(12345, 1000, "USD")},
+			wantSummary:  "💰 Payment request: USD 12.35",
+			wantCurrency: "USD",
+			wantAmount:   12.345,
+		},
+		{
+			name: "amount1000 wins over money",
+			req: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: proto.String("EUR"),
+				Amount1000:          proto.Uint64(10000),
+				Amount:              money(99, 1, "BRL"),
+			},
+			wantSummary:  "💰 Payment request: EUR 10.00",
+			wantCurrency: "EUR",
+			wantAmount:   10,
+		},
+		{
+			name: "iso currency kept when money carries a different one",
+			req: &waE2E.RequestPaymentMessage{
+				CurrencyCodeIso4217: proto.String("BRL"),
+				Amount:              money(500, 100, "USD"),
+			},
+			wantSummary:  "💰 Payment request: BRL 5.00",
+			wantCurrency: "BRL",
+			wantAmount:   5,
+		},
+		{
+			name: "money currency fills in for legacy amount when iso code is empty",
+			req: &waE2E.RequestPaymentMessage{
+				Amount1000: proto.Uint64(2550),
+				Amount:     money(2550, 1000, "BRL"),
+			},
+			wantSummary:  "💰 Payment request: BRL 2.55",
+			wantCurrency: "BRL",
+			wantAmount:   2.55,
+		},
+		{
+			name:         "money with zero offset yields no amount",
+			req:          &waE2E.RequestPaymentMessage{Amount: money(2550, 0, "BRL")},
+			wantSummary:  "💰 Payment request",
+			wantCurrency: "BRL",
+			wantAmount:   0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatPaymentRequestSummary(tt.req); got != tt.wantSummary {
+				t.Errorf("summary = %q, want %q", got, tt.wantSummary)
+			}
+			p := ExtractPaymentRequest(tt.req)
+			if p.Currency != tt.wantCurrency || p.Amount != tt.wantAmount {
+				t.Errorf("payload currency/amount = %q/%v, want %q/%v", p.Currency, p.Amount, tt.wantCurrency, tt.wantAmount)
+			}
+			if p.Amount1000 != tt.req.GetAmount1000() {
+				t.Errorf("amount_1000 = %d, want the raw proto value %d", p.Amount1000, tt.req.GetAmount1000())
+			}
+		})
+	}
+}
+
+// A note is plain text. A crafted note that nests another payment request must
+// not be followed: only the note's own text fields are read.
+func TestPaymentNoteIsNotExtractedRecursively(t *testing.T) {
+	nested := &waE2E.Message{RequestPaymentMessage: &waE2E.RequestPaymentMessage{
+		CurrencyCodeIso4217: proto.String("BRL"),
+		Amount1000:          proto.Uint64(1000),
+		NoteMessage:         &waE2E.Message{Conversation: proto.String("inner")},
+	}}
+	req := &waE2E.RequestPaymentMessage{
+		CurrencyCodeIso4217: proto.String("BRL"),
+		Amount1000:          proto.Uint64(2000),
+		NoteMessage:         nested,
+	}
+	if got := FormatPaymentRequestSummary(req); got != "💰 Payment request: BRL 2.00" {
+		t.Errorf("summary = %q, want no note", got)
+	}
+	if got := ExtractPaymentRequest(req).Note; got != "" {
+		t.Errorf("note = %q, want empty", got)
+	}
+
+	extended := &waE2E.RequestPaymentMessage{
+		NoteMessage: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("for the tickets")}},
+	}
+	if got := FormatPaymentRequestSummary(extended); got != "💰 Payment request - for the tickets" {
+		t.Errorf("summary = %q, want extended text note", got)
+	}
+	sent := &waE2E.SendPaymentMessage{NoteMessage: nested}
+	if got := FormatSendPaymentSummary(sent); got != "💰 Payment sent" {
+		t.Errorf("send summary = %q, want no note", got)
+	}
+}

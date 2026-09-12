@@ -5,11 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/sqlite"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 )
 
 func newTestSQLiteRepository(t *testing.T) *SQLiteRepository {
@@ -392,4 +397,57 @@ func countMessageReactions(t *testing.T, repo *SQLiteRepository) int {
 		t.Fatalf("count message reactions: %v", err)
 	}
 	return count
+}
+
+func TestSQLiteRepositoryCreateMessageStoresInteractiveMessage(t *testing.T) {
+	repo := newTestSQLiteRepository(t)
+	chatJID := types.NewJID("551199999999", types.DefaultUserServer)
+	senderJID := types.NewJID("551188888888", types.DefaultUserServer)
+	now := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+
+	evt := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     chatJID,
+				Sender:   senderJID,
+				IsFromMe: false,
+			},
+			ID:        "interactive-msg-db-1",
+			Timestamp: now,
+		},
+		Message: &waE2E.Message{
+			InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{Title: proto.String("Your coupon")},
+				Body:   &waE2E.InteractiveMessage_Body{Text: proto.String("Use it at checkout")},
+				InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+					NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+						Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+							{
+								Name:             proto.String("cta_copy"),
+								ButtonParamsJSON: proto.String(`{"display_text":"Copy coupon","copy_code":"SAVE10"}`),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := repo.CreateMessage(context.Background(), evt); err != nil {
+		t.Fatalf("CreateMessage failed: %v", err)
+	}
+
+	msg, err := repo.GetMessageByID("interactive-msg-db-1")
+	if err != nil {
+		t.Fatalf("GetMessageByID failed: %v", err)
+	}
+	if msg == nil {
+		t.Fatal("expected message to be stored")
+	}
+	if msg.ChatJID != chatJID.String() {
+		t.Errorf("ChatJID = %q, want %q", msg.ChatJID, chatJID.String())
+	}
+	if !strings.Contains(msg.Content, "Your coupon") || !strings.Contains(msg.Content, "SAVE10") {
+		t.Errorf("Content = %q, expected header title and copy code", msg.Content)
+	}
 }

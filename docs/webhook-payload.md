@@ -1186,6 +1186,16 @@ With auto-download disabled:
 
 ## Special Message Types
 
+Message types that carry no plain text of their own (contacts, locations, interactive
+messages, button/list responses, payments) also get a top-level `body`: a human-readable
+summary of the message. It is omitted only when there is nothing to summarize, such as a
+legacy button or list reply whose selected option has no text.
+
+Where a type has a structured field (`contact`, `location`, `buttons`, `payment_request`, ...),
+it is sent alongside `body` and remains the source to parse; treat `body` as display text,
+since its wording may change. Legacy button/list/template replies and sent payments have no
+structured field, so `body` is all they carry.
+
 ### Contact Message
 
 When a user shares a single contact:
@@ -1200,6 +1210,7 @@ When a user shares a single contact:
     "from": "628123456789@s.whatsapp.net",
     "from_name": "John Doe",
     "timestamp": "2025-07-13T11:10:19Z",
+    "body": "Contact: 3Care (+62 132)",
     "contact": {
       "displayName": "3Care",
       "vcard": "BEGIN:VCARD\nVERSION:3.0\nN:;3Care;;;\nFN:3Care\nTEL;type=Mobile:+62 132\nEND:VCARD",
@@ -1223,6 +1234,7 @@ When a user shares multiple contacts at once (via WhatsApp's multi-contact share
     "from": "628123456789@s.whatsapp.net",
     "from_name": "John Doe",
     "timestamp": "2025-07-13T11:10:19Z",
+    "body": "Contacts: Alice (+62 812 3456 7890)",
     "contacts_array": [
       {
         "displayName": "Alice",
@@ -1239,7 +1251,7 @@ When a user shares multiple contacts at once (via WhatsApp's multi-contact share
 }
 ```
 
-> **Note:** WhatsApp uses `ContactMessage` (field 4) for a single contact and `ContactsArrayMessage` (field 13) for multiple contacts. A single contact produces `"contact"`, while multiple contacts produce `"contacts_array"`.
+> **Note:** WhatsApp uses `ContactMessage` (field 4) for a single contact and `ContactsArrayMessage` (field 13) for multiple contacts. A single contact produces `"contact"`, while multiple contacts produce `"contacts_array"`. For `contacts_array`, `body` summarizes only the first contact; read the array for the full list.
 
 ### Location Message
 
@@ -1253,6 +1265,7 @@ When a user shares multiple contacts at once (via WhatsApp's multi-contact share
     "from": "628123456789@s.whatsapp.net",
     "from_name": "John Doe",
     "timestamp": "2023-10-15T11:15:00Z",
+    "body": "Jakarta, Indonesia — Central Jakarta, DKI Jakarta, Indonesia — https://maps.google.com/?q=-6.2088,106.8456",
     "location": {
       "degreesLatitude": -6.2088,
       "degreesLongitude": 106.8456,
@@ -1275,6 +1288,7 @@ When a user shares multiple contacts at once (via WhatsApp's multi-contact share
     "from": "628123456789@s.whatsapp.net",
     "from_name": "John Doe",
     "timestamp": "2025-07-13T11:11:22Z",
+    "body": "https://maps.google.com/?q=-7.8050297,110.4549165",
     "live_location": {
       "degreesLatitude": -7.8050297,
       "degreesLongitude": 110.4549165
@@ -1282,6 +1296,145 @@ When a user shares multiple contacts at once (via WhatsApp's multi-contact share
   }
 }
 ```
+
+A location `body` is the pin's name, address (both when present, joined by ` — `) and a Google
+Maps link. A live location uses its caption instead of a name.
+
+### Interactive Message
+
+Business and Cloud API messages with native buttons (copy code, open URL, call, quick reply,
+flows, carousels) arrive as an interactive message:
+
+```json
+{
+  "event": "message",
+  "device_id": "628987654321@s.whatsapp.net",
+  "payload": {
+    "id": "3EB0A1B2C3D4E5F60718",
+    "chat_id": "628123456789@s.whatsapp.net",
+    "from": "628123456789@s.whatsapp.net",
+    "from_name": "Example Store",
+    "timestamp": "2026-09-10T14:02:11Z",
+    "is_from_me": false,
+    "body": "Your order\nOrder #123 - Total $10.00\n📋 Copy coupon: SAVE10\n🔗 View order: https://store.example/orders/123",
+    "interactive": "Your order\nOrder #123 - Total $10.00\n📋 Copy coupon: SAVE10\n🔗 View order: https://store.example/orders/123",
+    "buttons": [
+      {
+        "type": "cta_copy",
+        "label": "Copy coupon",
+        "value": "SAVE10"
+      },
+      {
+        "type": "cta_url",
+        "label": "View order",
+        "url": "https://store.example/orders/123"
+      }
+    ]
+  }
+}
+```
+
+- `interactive`: plain-text rendering of header, body, footer, buttons and carousel cards (the same text as `body`).
+- `buttons`: every button, including those on carousel cards, in order. Omitted when there are none.
+
+#### `buttons` Fields
+
+| **Field** | **Type** | **Description** |
+|-----------|----------|-----------------|
+| `type`    | string   | Button name as sent by WhatsApp (`cta_copy`, `cta_url`, `cta_call`, `quick_reply`, `flow`, ...). `review_and_pay` and `payment_info` are reported as `payment`. |
+| `label`   | string   | Button text (`display_text`, falling back to `title`). `payment` buttons without text get `Pay order`. |
+| `value`   | string   | Code copied by a `cta_copy` button |
+| `url`     | string   | Target of a `cta_url` button |
+| `phone`   | string   | Number dialed by a `cta_call` button |
+| `id`      | string   | Reply ID of a `quick_reply` button, or flow ID of a `flow` button |
+
+Fields that do not apply to a button type are omitted. A button with neither a name nor
+any text is skipped.
+
+A `cta_copy` `value` is passed through as sent, without interpretation: the same button type
+carries coupon codes (as in the example above), order numbers and payment keys such as a
+Brazilian Pix key. Deciding what a copied code means is up to the webhook consumer.
+
+### Interactive Response Message
+
+When a user taps a native-flow button or submits a flow, the reply arrives as an interactive
+response:
+
+```json
+{
+  "event": "message",
+  "device_id": "628987654321@s.whatsapp.net",
+  "payload": {
+    "id": "3EB0F1E2D3C4B5A69788",
+    "chat_id": "628123456789@s.whatsapp.net",
+    "from": "628123456789@s.whatsapp.net",
+    "from_name": "John Doe",
+    "timestamp": "2026-09-10T14:05:40Z",
+    "is_from_me": false,
+    "body": "Yes, confirm",
+    "button_response": {
+      "id": "confirm_yes",
+      "title": "Yes, confirm",
+      "type": "quick_reply"
+    }
+  }
+}
+```
+
+| **Field** | **Type** | **Description** |
+|-----------|----------|-----------------|
+| `id`      | string   | `id` from the response parameters. Omitted when absent. |
+| `title`   | string   | Response body text, falling back to the `title` parameter. Omitted when absent. |
+| `type`    | string   | Native-flow response name, or `interactive_response` when there is none |
+
+`body` is the response text, falling back to the `title` parameter, then `id`, then the
+response name, then `Button response`.
+
+Legacy button, list and template-button replies carry no structured field; their `body` is the
+selected option's text.
+
+### Payment Request Message
+
+```json
+{
+  "event": "message",
+  "device_id": "628987654321@s.whatsapp.net",
+  "payload": {
+    "id": "3EB0112233445566AABB",
+    "chat_id": "628123456789@s.whatsapp.net",
+    "from": "628123456789@s.whatsapp.net",
+    "from_name": "John Doe",
+    "timestamp": "2026-09-10T15:20:00Z",
+    "is_from_me": false,
+    "body": "💰 Payment request: USD 25.50 - Lunch",
+    "payment_request": {
+      "currency": "USD",
+      "amount_1000": 25500,
+      "amount": 25.5,
+      "request_from": "628987654321@s.whatsapp.net",
+      "expiry_timestamp": 1757602800,
+      "note": "Lunch"
+    }
+  }
+}
+```
+
+| **Field**          | **Type** | **Description** |
+|--------------------|----------|-----------------|
+| `currency`         | string   | ISO 4217 currency code |
+| `amount_1000`      | integer  | Legacy amount in thousandths of the currency unit, as sent by WhatsApp. Omitted when the client only sends the newer `amount` field. |
+| `amount`           | number   | `amount_1000 / 1000`; when `amount_1000` is absent, `value / offset` of the newer WhatsApp `Money` amount (with its currency, if the ISO code is missing) |
+| `request_from`     | string   | JID the payment is requested from, resolved from `@lid` to the phone JID like `from` |
+| `expiry_timestamp` | integer  | Request expiry, Unix seconds |
+| `note`             | string   | Plain text of the attached note |
+
+Each field is omitted when WhatsApp does not send it. Unless both currency and amount are present, `body`
+is just `💰 Payment request` (plus the note, if any).
+
+### Payment Sent Message
+
+A sent WhatsApp Pay payment has no structured field; its `body` is `💰 Payment sent`, followed
+by ` - <note>` when a note is attached.
 
 ## Protocol Messages
 

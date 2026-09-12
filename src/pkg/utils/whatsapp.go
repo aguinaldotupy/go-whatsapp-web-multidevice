@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -177,6 +178,10 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
 	}
+	msg = UnwrapMessage(msg)
+	if msg == nil {
+		return ""
+	}
 
 	// Check for regular text message
 	if text := msg.GetConversation(); text != "" {
@@ -195,6 +200,26 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 		}
 	}
 
+	// Check for interactive message (native flow buttons, cta cards, carousels)
+	if im := msg.GetInteractiveMessage(); im != nil {
+		return FormatInteractiveMessageSummary(im)
+	}
+
+	// Check for interactive response message (button click / flow response)
+	if ir := msg.GetInteractiveResponseMessage(); ir != nil {
+		return ExtractInteractiveResponseText(ir)
+	}
+
+	// Check for payment request
+	if req := msg.GetRequestPaymentMessage(); req != nil {
+		return FormatPaymentRequestSummary(req)
+	}
+
+	// Check for send payment
+	if send := msg.GetSendPaymentMessage(); send != nil {
+		return FormatSendPaymentSummary(send)
+	}
+
 	// Check for image with caption
 	if img := msg.GetImageMessage(); img != nil && img.GetCaption() != "" {
 		return img.GetCaption()
@@ -208,6 +233,11 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 	// Check for document with caption
 	if doc := msg.GetDocumentMessage(); doc != nil && doc.GetCaption() != "" {
 		return doc.GetCaption()
+	}
+
+	// Check for video note (PTV) with caption
+	if ptv := msg.GetPtvMessage(); ptv != nil && ptv.GetCaption() != "" {
+		return ptv.GetCaption()
 	}
 
 	// Check for buttons response message
@@ -250,6 +280,365 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 	}
 
 	return ""
+}
+
+// InteractiveButtonPayload represents an extracted button from an interactive message for API consumers.
+type InteractiveButtonPayload struct {
+	Type  string `json:"type"`
+	Label string `json:"label,omitempty"`
+	Value string `json:"value,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Phone string `json:"phone,omitempty"`
+	ID    string `json:"id,omitempty"`
+}
+
+// ButtonResponsePayload represents the user's interaction/click on a button or flow.
+type ButtonResponsePayload struct {
+	ID    string `json:"id,omitempty"`
+	Title string `json:"title,omitempty"`
+	Type  string `json:"type,omitempty"`
+}
+
+// PaymentRequestPayload represents a WhatsApp Pay payment request.
+type PaymentRequestPayload struct {
+	Currency        string  `json:"currency,omitempty"`
+	Amount1000      uint64  `json:"amount_1000,omitempty"`
+	Amount          float64 `json:"amount,omitempty"`
+	RequestFrom     string  `json:"request_from,omitempty"`
+	ExpiryTimestamp int64   `json:"expiry_timestamp,omitempty"`
+	Note            string  `json:"note,omitempty"`
+}
+
+// NativeFlowButtonParams covers parameters deserialized from buttonParamsJSON in native flow buttons.
+type NativeFlowButtonParams struct {
+	DisplayText string `json:"display_text"`
+	URL         string `json:"url"`
+	PhoneNumber string `json:"phone_number"`
+	Copy        string `json:"copy_code"`
+	Title       string `json:"title"`
+	ID          string `json:"id"`
+	FlowID      string `json:"flow_id"`
+}
+
+// ExtractButtonsFromInteractive extracts all buttons from an interactive message into structured DTOs.
+func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveButtonPayload {
+	if im == nil {
+		return nil
+	}
+	var buttons []InteractiveButtonPayload
+
+	for _, btn := range im.GetNativeFlowMessage().GetButtons() {
+		if btn == nil {
+			continue
+		}
+		name := btn.GetName()
+		var params NativeFlowButtonParams
+		_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &params)
+
+		label := params.DisplayText
+		if label == "" {
+			label = params.Title
+		}
+		if name == "" && label == "" {
+			// Nothing to identify the button by; an empty {"type":""} entry
+			// would only confuse consumers.
+			continue
+		}
+
+		item := InteractiveButtonPayload{
+			Type:  name,
+			Label: label,
+		}
+
+		switch name {
+		case "cta_copy":
+			item.Value = params.Copy
+		case "cta_url":
+			item.URL = params.URL
+		case "cta_call":
+			item.Phone = params.PhoneNumber
+		case "quick_reply":
+			item.ID = params.ID
+		case "flow":
+			item.ID = params.FlowID
+		case "review_and_pay", "payment_info":
+			item.Type = "payment"
+			if item.Label == "" {
+				item.Label = "Pay order"
+			}
+		}
+
+		buttons = append(buttons, item)
+	}
+
+	if carousel := im.GetCarouselMessage(); carousel != nil {
+		for _, card := range carousel.GetCards() {
+			buttons = append(buttons, ExtractButtonsFromInteractive(card)...)
+		}
+	}
+
+	return buttons
+}
+
+// FormatInteractiveMessageSummary renders an InteractiveMessage as human-readable plain text.
+func FormatInteractiveMessageSummary(im *waE2E.InteractiveMessage) string {
+	if im == nil {
+		return ""
+	}
+	var parts []string
+
+	if header := im.GetHeader(); header != nil {
+		if title := header.GetTitle(); title != "" {
+			parts = append(parts, title)
+		}
+		if subtitle := header.GetSubtitle(); subtitle != "" {
+			parts = append(parts, subtitle)
+		}
+		if caption := interactiveHeaderMediaCaption(header); caption != "" {
+			parts = append(parts, caption)
+		}
+	}
+	if body := im.GetBody(); body != nil {
+		if text := body.GetText(); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if footer := im.GetFooter(); footer != nil {
+		if text := footer.GetText(); text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	for _, button := range im.GetNativeFlowMessage().GetButtons() {
+		if line := FormatNativeFlowButton(button); line != "" {
+			parts = append(parts, line)
+		}
+	}
+
+	if carousel := im.GetCarouselMessage(); carousel != nil {
+		for i, card := range carousel.GetCards() {
+			if cardSummary := FormatInteractiveMessageSummary(card); cardSummary != "" && cardSummary != "Interactive message" {
+				parts = append(parts, fmt.Sprintf("Card %d: %s", i+1, cardSummary))
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return "Interactive message"
+	}
+	return strings.Join(parts, "\n")
+}
+
+func interactiveHeaderMediaCaption(header *waE2E.InteractiveMessage_Header) string {
+	if header == nil {
+		return ""
+	}
+	if img := header.GetImageMessage(); img != nil {
+		return img.GetCaption()
+	}
+	if vid := header.GetVideoMessage(); vid != nil {
+		return vid.GetCaption()
+	}
+	if doc := header.GetDocumentMessage(); doc != nil {
+		return doc.GetCaption()
+	}
+	return ""
+}
+
+// FormatNativeFlowButton renders a single NativeFlowButton to text.
+func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) string {
+	if button == nil {
+		return ""
+	}
+	name := button.GetName()
+
+	var params NativeFlowButtonParams
+	_ = json.Unmarshal([]byte(button.GetButtonParamsJSON()), &params)
+
+	switch name {
+	case "cta_url":
+		label := params.DisplayText
+		if label == "" {
+			label = "Link"
+		}
+		if params.URL != "" {
+			return fmt.Sprintf("🔗 %s: %s", label, params.URL)
+		}
+	case "cta_call":
+		label := params.DisplayText
+		if label == "" {
+			label = "Call"
+		}
+		if params.PhoneNumber != "" {
+			return fmt.Sprintf("📞 %s: %s", label, params.PhoneNumber)
+		}
+	case "cta_copy":
+		label := params.DisplayText
+		if label == "" {
+			label = "Copy code"
+		}
+		if params.Copy != "" {
+			return fmt.Sprintf("📋 %s: %s", label, params.Copy)
+		}
+	case "quick_reply":
+		label := params.DisplayText
+		if label == "" {
+			label = params.Title
+		}
+		if label != "" {
+			return fmt.Sprintf("🔘 [%s]", label)
+		}
+	}
+
+	label := params.DisplayText
+	if label == "" {
+		label = params.Title
+	}
+	switch {
+	case name != "" && label != "":
+		return fmt.Sprintf("[%s] %s", name, label)
+	case name != "":
+		return fmt.Sprintf("[%s]", name)
+	case label != "":
+		return fmt.Sprintf("[%s]", label)
+	}
+	return ""
+}
+
+// ExtractInteractiveResponseText extracts user response text from an InteractiveResponseMessage.
+func ExtractInteractiveResponseText(ir *waE2E.InteractiveResponseMessage) string {
+	if ir == nil {
+		return ""
+	}
+	if body := ir.GetBody(); body != nil && body.GetText() != "" {
+		return body.GetText()
+	}
+	if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
+		var params struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal([]byte(nf.GetParamsJSON()), &params)
+		if params.Title != "" {
+			return params.Title
+		}
+		if params.ID != "" {
+			return params.ID
+		}
+		if nf.GetName() != "" {
+			return nf.GetName()
+		}
+	}
+	return "Button response"
+}
+
+// ExtractButtonResponse extracts structured button response details from an InteractiveResponseMessage.
+func ExtractButtonResponse(ir *waE2E.InteractiveResponseMessage) *ButtonResponsePayload {
+	if ir == nil {
+		return nil
+	}
+	resp := &ButtonResponsePayload{
+		Type: "interactive_response",
+	}
+	if body := ir.GetBody(); body != nil && body.GetText() != "" {
+		resp.Title = body.GetText()
+	}
+	if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
+		if nf.GetName() != "" {
+			resp.Type = nf.GetName()
+		}
+		var params struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal([]byte(nf.GetParamsJSON()), &params)
+		if params.ID != "" {
+			resp.ID = params.ID
+		}
+		if params.Title != "" && resp.Title == "" {
+			resp.Title = params.Title
+		}
+	}
+	return resp
+}
+
+// paymentNoteText returns the plain text of a payment note. Notes are always
+// plain text, so only the text fields are read; going through
+// ExtractMessageTextFromProto would recurse back into payment handling for a
+// crafted note that nests another payment message.
+func paymentNoteText(note *waE2E.Message) string {
+	if note == nil {
+		return ""
+	}
+	if text := note.GetConversation(); text != "" {
+		return text
+	}
+	return note.GetExtendedTextMessage().GetText()
+}
+
+// paymentRequestAmount resolves a payment request's currency and amount.
+// amount1000 (field 2) is the legacy encoding; newer clients may send only the
+// Money amount (field 6), where the value is expressed in 1/offset units
+// (offset 1000 mirrors amount1000, the Cloud API uses 100). The Money currency
+// only fills in when the ISO field is empty.
+func paymentRequestAmount(req *waE2E.RequestPaymentMessage) (currency string, amount float64) {
+	currency = req.GetCurrencyCodeIso4217()
+	money := req.GetAmount()
+	if currency == "" {
+		currency = money.GetCurrencyCode()
+	}
+	if amount1000 := req.GetAmount1000(); amount1000 > 0 {
+		return currency, float64(amount1000) / 1000.0
+	}
+	if money.GetOffset() > 0 && money.GetValue() > 0 {
+		return currency, float64(money.GetValue()) / float64(money.GetOffset())
+	}
+	return currency, 0
+}
+
+// FormatPaymentRequestSummary formats a RequestPaymentMessage into a human-readable text.
+func FormatPaymentRequestSummary(req *waE2E.RequestPaymentMessage) string {
+	if req == nil {
+		return ""
+	}
+	parts := []string{}
+	if currency, amount := paymentRequestAmount(req); currency != "" && amount > 0 {
+		parts = append(parts, fmt.Sprintf("💰 Payment request: %s %.2f", currency, amount))
+	} else {
+		parts = append(parts, "💰 Payment request")
+	}
+	if noteText := paymentNoteText(req.GetNoteMessage()); noteText != "" {
+		parts = append(parts, noteText)
+	}
+	return strings.Join(parts, " - ")
+}
+
+// FormatSendPaymentSummary formats a SendPaymentMessage into a human-readable text.
+func FormatSendPaymentSummary(send *waE2E.SendPaymentMessage) string {
+	if send == nil {
+		return ""
+	}
+	parts := []string{"💰 Payment sent"}
+	if noteText := paymentNoteText(send.GetNoteMessage()); noteText != "" {
+		parts = append(parts, noteText)
+	}
+	return strings.Join(parts, " - ")
+}
+
+// ExtractPaymentRequest extracts structured payment request details from a RequestPaymentMessage.
+func ExtractPaymentRequest(req *waE2E.RequestPaymentMessage) *PaymentRequestPayload {
+	if req == nil {
+		return nil
+	}
+	currency, amount := paymentRequestAmount(req)
+	return &PaymentRequestPayload{
+		Currency:        currency,
+		Amount1000:      req.GetAmount1000(),
+		Amount:          amount,
+		RequestFrom:     req.GetRequestFrom(),
+		ExpiryTimestamp: req.GetExpiryTimestamp(),
+		Note:            paymentNoteText(req.GetNoteMessage()),
+	}
 }
 
 // ExtractPollCreationMessage returns the poll creation payload regardless of
@@ -1089,35 +1478,53 @@ func GetMessageDigestOrSignature(msg, key []byte) (string, error) {
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-// UnwrapMessage unwraps FutureProof wrappers (ephemeral, view-once, etc.)
-// to access the inner message content. WhatsApp wraps messages in these
-// containers when disappearing messages or view-once is enabled.
-// The original message is not modified; the unwrapped inner message is returned.
+// UnwrapMessage unwraps FutureProof wrappers (ephemeral, view-once, document
+// with caption, etc.) to access the inner message content. WhatsApp wraps
+// messages in these containers when disappearing messages or view-once is
+// enabled, and captioned documents always arrive wrapped.
+//
+// Live events are already unwrapped by whatsmeow (events.Message.UnwrapRaw);
+// this matters for raw messages such as history sync, which still carry every
+// layer. The set of wrappers mirrors UnwrapRaw, minus EditedMessage, which
+// callers handle as a protocol message. The original message is not modified;
+// the unwrapped inner message is returned.
 func UnwrapMessage(msg *waE2E.Message) *waE2E.Message {
 	if msg == nil {
 		return msg
 	}
 	inner := msg
-	for i := 0; i < 3; i++ { // safeguard against excessively nested wrappers
-		if vm := inner.GetViewOnceMessage(); vm != nil && vm.GetMessage() != nil {
-			inner = vm.GetMessage()
-			continue
+	// Real stacks are at most a few layers deep (e.g. device-sent > ephemeral
+	// > view-once); the bound only guards against pathological nesting.
+	for i := 0; i < 8; i++ {
+		next := unwrapMessageOnce(inner)
+		if next == nil {
+			break
 		}
-		if em := inner.GetEphemeralMessage(); em != nil && em.GetMessage() != nil {
-			inner = em.GetMessage()
-			continue
-		}
-		if vm2 := inner.GetViewOnceMessageV2(); vm2 != nil && vm2.GetMessage() != nil {
-			inner = vm2.GetMessage()
-			continue
-		}
-		if vm2e := inner.GetViewOnceMessageV2Extension(); vm2e != nil && vm2e.GetMessage() != nil {
-			inner = vm2e.GetMessage()
-			continue
-		}
-		break
+		inner = next
 	}
 	return inner
+}
+
+// unwrapMessageOnce peels a single wrapper layer, or returns nil when msg is
+// not a wrapper.
+func unwrapMessageOnce(msg *waE2E.Message) *waE2E.Message {
+	switch {
+	case msg.GetDeviceSentMessage().GetMessage() != nil:
+		return msg.GetDeviceSentMessage().GetMessage()
+	case msg.GetEphemeralMessage().GetMessage() != nil:
+		return msg.GetEphemeralMessage().GetMessage()
+	case msg.GetViewOnceMessage().GetMessage() != nil:
+		return msg.GetViewOnceMessage().GetMessage()
+	case msg.GetViewOnceMessageV2().GetMessage() != nil:
+		return msg.GetViewOnceMessageV2().GetMessage()
+	case msg.GetViewOnceMessageV2Extension().GetMessage() != nil:
+		return msg.GetViewOnceMessageV2Extension().GetMessage()
+	case msg.GetDocumentWithCaptionMessage().GetMessage() != nil:
+		return msg.GetDocumentWithCaptionMessage().GetMessage()
+	case msg.GetLottieStickerMessage().GetMessage() != nil:
+		return msg.GetLottieStickerMessage().GetMessage()
+	}
+	return nil
 }
 
 // BuildEventMessage builds event message structure

@@ -246,8 +246,14 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 			}
 
 			// Extract message content and media info
-			content := utils.ExtractMessageTextFromProto(msg.GetMessage())
-			mediaType, filename, mediaURL, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := utils.ExtractMediaInfo(msg.GetMessage())
+			// History sync hands over the raw message, still wrapped in
+			// ephemeral/view-once layers in disappearing chats. Unwrap once and
+			// feed both extractors the same message: ExtractMessageTextFromProto
+			// unwraps on its own but ExtractMediaInfo does not, so a wrapped
+			// captioned image would otherwise be stored as text with no media.
+			inner := utils.UnwrapMessage(msg.GetMessage())
+			content := utils.ExtractMessageTextFromProto(inner)
+			mediaType, filename, mediaURL, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := utils.ExtractMediaInfo(inner)
 
 			// Skip if there's no content and no media
 			if content == "" && mediaType == "" {

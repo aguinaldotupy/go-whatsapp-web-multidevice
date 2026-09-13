@@ -981,6 +981,44 @@ func TestFlowButtonsAndResponses(t *testing.T) {
 		}
 	})
 
+	t.Run("business app form submission (real payload)", func(t *testing.T) {
+		// Verbatim paramsJSON of a form submitted from the WhatsApp Business app
+		// (form built in the app, sent through the API, filled on the phone).
+		real := `{"wa_flow_response_params":{"flow_creation_source":"FLEXIBLE_CHECKOUT","flow_id":"1332768858934028","flow_name":"custom_form_be6b3e","response_message":"{\"version\":2,\"screens\":[{\"id\":\"contact_details\",\"title\":\"\",\"components\":[{\"name\":\"experincia_do_evento\",\"type\":\"TextArea\",\"isSensitive\":false,\"label\":\"Experiência do Evento\"},{\"isSensitive\":false,\"label\":\"Atendimento\",\"value\":\"Top\",\"name\":\"atendimento\",\"type\":\"TextInput\"},{\"name\":\"autgrafo\",\"value\":\"Top\",\"label\":\"Autógrafo\",\"isSensitive\":false,\"type\":\"TextInput\"},{\"value\":\"Top\",\"label\":\"Postou nas Redes Sociais\",\"type\":\"TextInput\",\"isSensitive\":false,\"name\":\"postou_nas_redes_sociais\"}]}]}","title":"\u200eComplete form"}}`
+		ir := &waE2E.InteractiveResponseMessage{
+			Body: &waE2E.InteractiveResponseMessage_Body{Text: proto.String("Sent")},
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+					Name:       proto.String("galaxy_message"),
+					ParamsJSON: proto.String(real),
+				},
+			},
+		}
+		want := "📝 Form response: custom_form_be6b3e\n  Experiência do Evento: —\n  Atendimento: Top\n  Autógrafo: Top\n  Postou nas Redes Sociais: Top"
+		if got := ExtractInteractiveResponseText(ir); got != want {
+			t.Errorf("text = %q, want %q", got, want)
+		}
+		resp := ExtractButtonResponse(ir)
+		if resp.Type != "flow" || resp.ID != "1332768858934028" || resp.FlowName != "custom_form_be6b3e" || resp.Title != "Sent" {
+			t.Errorf("response = %+v", resp)
+		}
+		wantFields := map[string]any{"experincia_do_evento": "", "atendimento": "Top", "autgrafo": "Top", "postou_nas_redes_sociais": "Top"}
+		if len(resp.Fields) != 4 {
+			t.Errorf("fields = %+v", resp.Fields)
+		}
+		for k, v := range wantFields {
+			if resp.Fields[k] != v {
+				t.Errorf("fields[%s] = %v, want %v", k, resp.Fields[k], v)
+			}
+		}
+		if resp.Labels["autgrafo"] != "Autógrafo" || len(resp.Labels) != 4 {
+			t.Errorf("labels = %+v", resp.Labels)
+		}
+		if _, leaked := resp.Fields["wa_flow_response_params"]; leaked {
+			t.Error("raw wrapper must not be exposed as a field")
+		}
+	})
+
 	t.Run("plain button reply is unchanged", func(t *testing.T) {
 		ir := &waE2E.InteractiveResponseMessage{
 			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{

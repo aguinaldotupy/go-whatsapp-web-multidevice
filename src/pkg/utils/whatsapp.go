@@ -291,6 +291,9 @@ type InteractiveButtonPayload struct {
 	URL   string `json:"url,omitempty"`
 	Phone string `json:"phone,omitempty"`
 	ID    string `json:"id,omitempty"`
+	// Flow (form) buttons only: the raw button parameters (flow_id, flow_cta,
+	// flow_token, flow_action, ...) so a consumer can re-send the same flow.
+	Params json.RawMessage `json:"params,omitempty"`
 	// Payment (order_details) buttons only.
 	ReferenceID string  `json:"reference_id,omitempty"`
 	Currency    string  `json:"currency,omitempty"`
@@ -505,6 +508,9 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 			// Same precedence as FormatNativeFlowButton: display_text, flow_cta, title.
 			if params.DisplayText == "" && params.FlowCTA != "" {
 				item.Label = params.FlowCTA
+			}
+			if raw := strings.TrimSpace(btn.GetButtonParamsJSON()); json.Valid([]byte(raw)) {
+				item.Params = json.RawMessage(raw)
 			}
 		case "review_and_pay", "payment_info", "review_order":
 			item.Type = "payment"

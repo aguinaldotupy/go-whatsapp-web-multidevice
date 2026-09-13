@@ -1347,6 +1347,7 @@ flows, carousels) arrive as an interactive message:
 | `url`     | string   | Target of a `cta_url` button |
 | `phone`   | string   | Number dialed by a `cta_call` button |
 | `id`      | string   | Reply ID of a `quick_reply` button, or flow ID of a `flow` button (WhatsApp Flow / form; the apps send it as `galaxy_message`, reported as `flow`, with the label taken from `flow_cta`) |
+| `params`  | object   | `flow` buttons: the raw button parameters as sent by WhatsApp (`flow_id`, `flow_cta`, `flow_token`, `flow_action`, `flow_action_payload`, ...), so a consumer can re-send the same flow |
 | `reference_id` | string | `payment` buttons: the order's `reference_id` |
 | `currency` | string  | `payment` buttons: ISO 4217 code (`BRL`) |
 | `amount`  | number   | `payment` buttons: order total (`total_amount.value / offset`) |

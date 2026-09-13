@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -907,6 +908,13 @@ func TestFlowButtonsAndResponses(t *testing.T) {
 		buttons := ExtractButtonsFromInteractive(im)
 		if len(buttons) != 1 || buttons[0].Type != "flow" || buttons[0].Label != "Responder" || buttons[0].ID != "1234567890" {
 			t.Errorf("buttons = %+v", buttons)
+		}
+		if string(buttons[0].Params) != flowParams {
+			t.Errorf("params = %s, want the raw button params", buttons[0].Params)
+		}
+		encoded, _ := json.Marshal(buttons[0])
+		if !strings.Contains(string(encoded), `"params":{"flow_message_version"`) {
+			t.Errorf("params must serialize as a JSON object, got %s", encoded)
 		}
 	})
 

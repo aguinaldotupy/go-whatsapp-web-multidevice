@@ -290,6 +290,11 @@ type InteractiveButtonPayload struct {
 	URL   string `json:"url,omitempty"`
 	Phone string `json:"phone,omitempty"`
 	ID    string `json:"id,omitempty"`
+	// Payment (order_details) buttons only.
+	ReferenceID string  `json:"reference_id,omitempty"`
+	Currency    string  `json:"currency,omitempty"`
+	Amount      float64 `json:"amount,omitempty"`
+	Status      string  `json:"status,omitempty"`
 }
 
 // ButtonResponsePayload represents the user's interaction/click on a button or flow.
@@ -318,6 +323,133 @@ type NativeFlowButtonParams struct {
 	Title       string `json:"title"`
 	ID          string `json:"id"`
 	FlowID      string `json:"flow_id"`
+}
+
+// orderMoney is the {value, offset} amount encoding of WhatsApp order messages:
+// the amount is value / offset (offset 100 for BRL cents).
+type orderMoney struct {
+	Value  int64 `json:"value"`
+	Offset int64 `json:"offset"`
+}
+
+func (m *orderMoney) amount() (float64, bool) {
+	if m == nil || m.Offset <= 0 {
+		return 0, false
+	}
+	return float64(m.Value) / float64(m.Offset), true
+}
+
+// orderDetailsParams is the buttonParamsJSON of the payment buttons WhatsApp
+// uses for Brazil payments: review_and_pay (order_details) carries the amount,
+// the Pix code or payment link and the items; review_order (order_status)
+// carries the order and payment status. Field names follow Meta's Cloud API
+// order_details / order_status documentation; unknown fields are ignored.
+type orderDetailsParams struct {
+	ReferenceID     string      `json:"reference_id"`
+	Currency        string      `json:"currency"`
+	TotalAmount     *orderMoney `json:"total_amount"`
+	PaymentSettings []struct {
+		Type           string `json:"type"`
+		PixDynamicCode *struct {
+			Code         string `json:"code"`
+			MerchantName string `json:"merchant_name"`
+			Key          string `json:"key"`
+			KeyType      string `json:"key_type"`
+		} `json:"pix_dynamic_code"`
+		PixStaticCode *struct {
+			MerchantName string `json:"merchant_name"`
+			Key          string `json:"key"`
+			KeyType      string `json:"key_type"`
+		} `json:"pix_static_code"`
+		PaymentLink *struct {
+			URI string `json:"uri"`
+		} `json:"payment_link"`
+	} `json:"payment_settings"`
+	Order *struct {
+		Status string `json:"status"`
+		Items  []struct {
+			Name     string      `json:"name"`
+			Quantity int         `json:"quantity"`
+			Amount   *orderMoney `json:"amount"`
+		} `json:"items"`
+	} `json:"order"`
+	Payment *struct {
+		Status string `json:"status"`
+	} `json:"payment"`
+}
+
+// formatOrderAmount renders "BRL 500.00"; the currency is omitted when absent.
+func formatOrderAmount(currency string, amount float64) string {
+	if currency == "" {
+		return fmt.Sprintf("%.2f", amount)
+	}
+	return fmt.Sprintf("%s %.2f", currency, amount)
+}
+
+// formatOrderDetailsButton renders a review_and_pay button: the total, the
+// items, and the Pix code or payment link the customer is asked to use.
+func formatOrderDetailsButton(label string, p orderDetailsParams) string {
+	var lines []string
+	head := "💳 " + label
+	if total, ok := p.TotalAmount.amount(); ok {
+		head += ": " + formatOrderAmount(p.Currency, total)
+	}
+	lines = append(lines, head)
+	if p.Order != nil {
+		for _, item := range p.Order.Items {
+			if item.Name == "" {
+				continue
+			}
+			line := "  • " + item.Name
+			if item.Quantity > 1 {
+				line = fmt.Sprintf("  • %d× %s", item.Quantity, item.Name)
+			}
+			if amount, ok := item.Amount.amount(); ok {
+				line += " — " + formatOrderAmount(p.Currency, amount)
+			}
+			lines = append(lines, line)
+		}
+	}
+	for _, ps := range p.PaymentSettings {
+		switch {
+		case ps.PixDynamicCode != nil && ps.PixDynamicCode.Code != "":
+			lines = append(lines, "📋 Pix: "+ps.PixDynamicCode.Code)
+		case ps.PixStaticCode != nil && ps.PixStaticCode.Key != "":
+			line := "📋 Pix key: " + ps.PixStaticCode.Key
+			if ps.PixStaticCode.KeyType != "" {
+				line += " (" + ps.PixStaticCode.KeyType + ")"
+			}
+			if ps.PixStaticCode.MerchantName != "" {
+				line += " — " + ps.PixStaticCode.MerchantName
+			}
+			lines = append(lines, line)
+		case ps.PaymentLink != nil && ps.PaymentLink.URI != "":
+			lines = append(lines, "🔗 Pay: "+ps.PaymentLink.URI)
+		}
+	}
+	if p.ReferenceID != "" {
+		lines = append(lines, "Ref: "+p.ReferenceID)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatOrderStatusButton renders a review_order button (order_status message).
+func formatOrderStatusButton(label string, p orderDetailsParams) string {
+	line := "🧾 " + label
+	var parts []string
+	if p.Order != nil && p.Order.Status != "" {
+		parts = append(parts, "order "+p.Order.Status)
+	}
+	if p.Payment != nil && p.Payment.Status != "" {
+		parts = append(parts, "payment "+p.Payment.Status)
+	}
+	if len(parts) > 0 {
+		line += ": " + strings.Join(parts, ", ")
+	}
+	if p.ReferenceID != "" {
+		line += "\nRef: " + p.ReferenceID
+	}
+	return line
 }
 
 // ExtractButtonsFromInteractive extracts all buttons from an interactive message into structured DTOs.
@@ -361,10 +493,33 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 			item.ID = params.ID
 		case "flow":
 			item.ID = params.FlowID
-		case "review_and_pay", "payment_info":
+		case "review_and_pay", "payment_info", "review_order":
 			item.Type = "payment"
 			if item.Label == "" {
 				item.Label = "Pay order"
+				if name == "review_order" {
+					item.Label = "Order status"
+				}
+			}
+			var order orderDetailsParams
+			_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &order)
+			item.ReferenceID = order.ReferenceID
+			item.Currency = order.Currency
+			if total, ok := order.TotalAmount.amount(); ok {
+				item.Amount = total
+			}
+			if order.Order != nil {
+				item.Status = order.Order.Status
+			}
+			for _, ps := range order.PaymentSettings {
+				switch {
+				case ps.PixDynamicCode != nil && ps.PixDynamicCode.Code != "":
+					item.Value = ps.PixDynamicCode.Code
+				case ps.PixStaticCode != nil && ps.PixStaticCode.Key != "":
+					item.Value = ps.PixStaticCode.Key
+				case ps.PaymentLink != nil && ps.PaymentLink.URI != "":
+					item.URL = ps.PaymentLink.URI
+				}
 			}
 		}
 
@@ -488,6 +643,30 @@ func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_N
 		if label != "" {
 			return fmt.Sprintf("🔘 [%s]", label)
 		}
+	case "review_and_pay", "payment_info":
+		// Brazil payment requests (order_details) arrive as this button; the
+		// amount, Pix code and items live in the params, not in any text.
+		var order orderDetailsParams
+		_ = json.Unmarshal([]byte(button.GetButtonParamsJSON()), &order)
+		label := params.DisplayText
+		if label == "" {
+			label = params.Title
+		}
+		if label == "" {
+			label = "Pay order"
+		}
+		return formatOrderDetailsButton(label, order)
+	case "review_order":
+		var order orderDetailsParams
+		_ = json.Unmarshal([]byte(button.GetButtonParamsJSON()), &order)
+		label := params.DisplayText
+		if label == "" {
+			label = params.Title
+		}
+		if label == "" {
+			label = "Order status"
+		}
+		return formatOrderStatusButton(label, order)
 	}
 
 	label := params.DisplayText

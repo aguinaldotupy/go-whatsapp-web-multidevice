@@ -36,6 +36,8 @@ func TestSchemas(t *testing.T) {
 		// ---- whatsapp_send ----
 		{"send text ok", sendSchema, `{"type":"text","phone":"628","message":"hi"}`, false},
 		{"send text missing message", sendSchema, `{"type":"text","phone":"628"}`, true},
+		{"send interactive ok", sendSchema, `{"type":"interactive","phone":"628","body":"hi","buttons":"[{\"name\":\"cta_url\",\"params\":{\"url\":\"https://x\"}}]"}`, false},
+		{"send interactive missing buttons", sendSchema, `{"type":"interactive","phone":"628","body":"hi"}`, true},
 		{"send missing phone", sendSchema, `{"type":"text","message":"hi"}`, true},
 		{"send bad type", sendSchema, `{"type":"fax","phone":"628"}`, true},
 		{"send image ok", sendSchema, `{"type":"image","phone":"628","image_url":"http://x/a.png","caption":"c"}`, false},

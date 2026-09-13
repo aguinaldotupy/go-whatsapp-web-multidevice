@@ -21,7 +21,7 @@ func InitMcpSend(sendService domainSend.ISendUsecase, resolver deviceResolver) *
 
 func (s *SendHandler) AddSendTools(mcpServer *server.MCPServer) {
 	tool := mcpg.NewTool("whatsapp_send",
-		mcpg.WithDescription("Send a WhatsApp message. The `type` field selects what to send: text, image, video, audio, document, sticker, location, contact, poll, link, or forward an existing message."),
+		mcpg.WithDescription("Send a WhatsApp message. The `type` field selects what to send: text, image, video, audio, document, sticker, location, contact, poll, link, interactive (native buttons / form), or forward an existing message."),
 		mcpg.WithTitleAnnotation("Send WhatsApp Message"),
 		mcpg.WithReadOnlyHintAnnotation(false),
 		mcpg.WithDestructiveHintAnnotation(false),
@@ -123,6 +123,20 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 			Question:    request.GetString("question", ""),
 			Options:     request.GetStringSlice("options", nil),
 			MaxAnswer:   request.GetInt("max_answer", 1),
+		})
+	case "interactive":
+		var buttons []domainSend.InteractiveButton
+		if raw := request.GetString("buttons", ""); raw != "" {
+			if jsonErr := json.Unmarshal([]byte(raw), &buttons); jsonErr != nil {
+				return mcpg.NewToolResultError("buttons must be a JSON array of {name, params}: " + jsonErr.Error()), nil
+			}
+		}
+		res, err = s.sendService.SendInteractive(ctx, domainSend.InteractiveRequest{
+			BaseRequest: base,
+			Header:      request.GetString("header", ""),
+			Body:        request.GetString("body", ""),
+			Footer:      request.GetString("footer", ""),
+			Buttons:     buttons,
 		})
 	case "link":
 		res, err = s.sendService.SendLink(ctx, domainSend.LinkRequest{

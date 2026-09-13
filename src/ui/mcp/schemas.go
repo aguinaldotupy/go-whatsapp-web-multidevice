@@ -8,7 +8,7 @@ const sendSchema = `{
   "type": "object",
   "required": ["type", "phone"],
   "properties": {
-    "type": {"type": "string", "enum": ["text","image","video","audio","document","sticker","location","contact","poll","link","forward"], "description": "Kind of message to send"},
+    "type": {"type": "string", "enum": ["text","image","video","audio","document","sticker","location","contact","poll","link","interactive","forward"], "description": "Kind of message to send"},
     "phone": {"type": "string", "description": "Destination phone number or group JID"},
     "device_id": {"type": "string", "description": "Act as this device instead of the connection default (X-Device-Id header)"},
     "is_forwarded": {"type": "boolean", "description": "Mark the message as forwarded (default false)"},
@@ -33,6 +33,10 @@ const sendSchema = `{
     "question": {"type": "string", "description": "type=poll: the poll question"},
     "options": {"type": "array", "items": {"type": "string"}, "minItems": 2, "description": "type=poll: poll options (min 2)"},
     "max_answer": {"type": "integer", "description": "type=poll: max selectable options (default 1)"},
+    "header": {"type": "string", "description": "type=interactive: header title"},
+    "body": {"type": "string", "description": "type=interactive: body text"},
+    "footer": {"type": "string", "description": "type=interactive: footer text"},
+    "buttons": {"type": "string", "description": "type=interactive: JSON array of native flow buttons, each {\"name\": \"cta_url|cta_copy|cta_call|quick_reply|galaxy_message|...\", \"params\": {...}}; params is the button's buttonParamsJSON object (display_text plus url / copy_code / phone_number / id, or the flow_* keys of a form)"},
     "link": {"type": "string", "description": "type=link: the URL to send"},
     "message_id": {"type": "string", "description": "type=forward: source message ID from chat storage"},
     "duration": {"type": "integer", "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"},
@@ -48,6 +52,7 @@ const sendSchema = `{
     {"if": {"properties": {"type": {"const": "location"}}}, "then": {"required": ["latitude", "longitude"]}},
     {"if": {"properties": {"type": {"const": "contact"}}},  "then": {"required": ["contact_name", "contact_phone"]}},
     {"if": {"properties": {"type": {"const": "poll"}}},     "then": {"required": ["question", "options"]}},
+    {"if": {"properties": {"type": {"const": "interactive"}}}, "then": {"required": ["buttons"]}},
     {"if": {"properties": {"type": {"const": "link"}}},     "then": {"required": ["link", "caption"]}},
     {"if": {"properties": {"type": {"const": "forward"}}},  "then": {"required": ["message_id"]}}
   ]

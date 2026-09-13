@@ -1341,15 +1341,34 @@ flows, carousels) arrive as an interactive message:
 
 | **Field** | **Type** | **Description** |
 |-----------|----------|-----------------|
-| `type`    | string   | Button name as sent by WhatsApp (`cta_copy`, `cta_url`, `cta_call`, `quick_reply`, `flow`, ...). `review_and_pay` and `payment_info` are reported as `payment`. |
-| `label`   | string   | Button text (`display_text`, falling back to `title`). `payment` buttons without text get `Pay order`. |
+| `type`    | string   | Button name as sent by WhatsApp (`cta_copy`, `cta_url`, `cta_call`, `quick_reply`, `flow`, ...). `review_and_pay`, `payment_info` and `review_order` are reported as `payment`. |
+| `label`   | string   | Button text (`display_text`, falling back to `title`). `payment` buttons without text get `Pay order` (`Order status` for `review_order`). |
 | `value`   | string   | Code copied by a `cta_copy` button |
 | `url`     | string   | Target of a `cta_url` button |
 | `phone`   | string   | Number dialed by a `cta_call` button |
 | `id`      | string   | Reply ID of a `quick_reply` button, or flow ID of a `flow` button |
+| `reference_id` | string | `payment` buttons: the order's `reference_id` |
+| `currency` | string  | `payment` buttons: ISO 4217 code (`BRL`) |
+| `amount`  | number   | `payment` buttons: order total (`total_amount.value / offset`) |
+| `status`  | string   | `payment` buttons: `order.status` (`pending`, `processing`, ...) |
 
 Fields that do not apply to a button type are omitted. A button with neither a name nor
 any text is skipped.
+
+Brazil payment requests (WhatsApp Pay / Pix "order details") arrive as an interactive message
+whose only button is `review_and_pay`; the amount, items and Pix code live in the button
+parameters, not in any text. They render in `body` as:
+
+```
+💳 Pay order: BRL 19.90
+  • 2× Camiseta — BRL 9.95
+📋 Pix: 00020126580014br.gov.bcb.pix...
+Ref: order-42
+```
+
+and in `buttons` as a `payment` entry with `value` set to the Pix code or key (`url` for a
+payment link). An `order_status` message (`review_order` button) renders as
+`🧾 Order status: order processing, payment captured`.
 
 A `cta_copy` `value` is passed through as sent, without interpretation: the same button type
 carries coupon codes (as in the example above), order numbers and payment keys such as a

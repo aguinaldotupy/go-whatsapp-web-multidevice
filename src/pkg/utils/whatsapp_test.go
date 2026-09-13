@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
@@ -806,6 +807,70 @@ func TestExtractContextInfoInteractiveMessage(t *testing.T) {
 		}
 		if ci := ExtractContextInfo(msg); ci != nil {
 			t.Fatalf("expected nil ContextInfo, got %+v", ci)
+		}
+	})
+}
+
+// Brazil payment requests arrive as an interactive message whose only content
+// is a review_and_pay button; everything (amount, items, Pix code) is in the
+// button params, in the order_details format of Meta's Cloud API docs.
+func TestOrderDetailsButtons(t *testing.T) {
+	// Verbatim parameters example from Meta's order_details documentation.
+	metaExample := `{"reference_id":"unique-reference-id","type":"digital-goods","payment_type":"br","payment_settings":[{"type":"payment_link","payment_link":{"uri":"https://my-payment-link-url"}}],"currency":"BRL","total_amount":{"value":50000,"offset":100},"order":{"status":"pending","tax":{"value":0,"offset":100,"description":"optional text"},"items":[{"retailer_id":"1234567","name":"Cake","amount":{"value":50000,"offset":100},"quantity":1}],"subtotal":{"value":50000,"offset":100}}}`
+	pixExample := `{"reference_id":"order-42","type":"physical-goods","payment_type":"br","payment_settings":[{"type":"pix_dynamic_code","pix_dynamic_code":{"code":"00020126580014br.gov.bcb.pix0136abc","merchant_name":"Loja","key":"11144477735","key_type":"CPF"}}],"currency":"BRL","total_amount":{"value":1990,"offset":100},"order":{"status":"pending","items":[{"name":"Camiseta","amount":{"value":995,"offset":100},"quantity":2}]}}`
+	button := func(name, params string) *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton {
+		return &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{Name: proto.String(name), ButtonParamsJSON: proto.String(params)}
+	}
+
+	t.Run("payment link order renders total, items, link and reference", func(t *testing.T) {
+		got := FormatNativeFlowButton(button("review_and_pay", metaExample))
+		want := "💳 Pay order: BRL 500.00\n  • Cake — BRL 500.00\n🔗 Pay: https://my-payment-link-url\nRef: unique-reference-id"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("pix order renders code and quantities", func(t *testing.T) {
+		got := FormatNativeFlowButton(button("review_and_pay", pixExample))
+		want := "💳 Pay order: BRL 19.90\n  • 2× Camiseta — BRL 9.95\n📋 Pix: 00020126580014br.gov.bcb.pix0136abc\nRef: order-42"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("order status button", func(t *testing.T) {
+		got := FormatNativeFlowButton(button("review_order", `{"reference_id":"order-42","order":{"status":"processing"},"payment":{"status":"captured","timestamp":1722445231}}`))
+		want := "🧾 Order status: order processing, payment captured\nRef: order-42"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("empty params still render a label, never the raw name", func(t *testing.T) {
+		if got := FormatNativeFlowButton(button("review_and_pay", "")); got != "💳 Pay order" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("structured button payload carries amount, reference and code", func(t *testing.T) {
+		im := &waE2E.InteractiveMessage{InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button("review_and_pay", pixExample), button("review_and_pay", metaExample)},
+			},
+		}}
+		buttons := ExtractButtonsFromInteractive(im)
+		if len(buttons) != 2 {
+			t.Fatalf("expected 2 buttons, got %d", len(buttons))
+		}
+		pix, link := buttons[0], buttons[1]
+		if pix.Type != "payment" || pix.Label != "Pay order" || pix.Currency != "BRL" || pix.Amount != 19.9 || pix.ReferenceID != "order-42" || pix.Status != "pending" || pix.Value != "00020126580014br.gov.bcb.pix0136abc" {
+			t.Errorf("pix button mismatch: %+v", pix)
+		}
+		if link.Amount != 500 || link.URL != "https://my-payment-link-url" || link.Value != "" {
+			t.Errorf("link button mismatch: %+v", link)
+		}
+		if got := ExtractMessageTextFromProto(&waE2E.Message{InteractiveMessage: im}); !strings.Contains(got, "BRL 19.90") || strings.Contains(got, "[review_and_pay]") {
+			t.Errorf("message text = %q", got)
 		}
 	})
 }

@@ -540,7 +540,7 @@ func TestBuildChatwootMessageContent(t *testing.T) {
 		// "image"/"video"/"document" keys can't represent without one
 		// overwriting another.
 		content, atts := buildChatwootMessageContent(map[string]any{
-			"interactive":      "Check our products",
+			"interactive":       "Check our products",
 			"interactive_media": []string{"/tmp/wa/card1.jpg", "/tmp/wa/card2.jpg"},
 		}, false, "")
 		if content != "Check our products" {
@@ -1123,12 +1123,12 @@ func TestFormatInteractiveMessageSummary(t *testing.T) {
 			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 				NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
 					Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
-						{Name: proto.String("review_and_pay")},
+						{Name: proto.String("send_location_request")},
 					},
 				},
 			},
 		}
-		want := "[review_and_pay]"
+		want := "[send_location_request]"
 		if got := formatInteractiveMessageSummary(im); got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}

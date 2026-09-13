@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -290,6 +291,9 @@ type InteractiveButtonPayload struct {
 	URL   string `json:"url,omitempty"`
 	Phone string `json:"phone,omitempty"`
 	ID    string `json:"id,omitempty"`
+	// Flow (form) buttons only: the raw button parameters (flow_id, flow_cta,
+	// flow_token, flow_action, ...) so a consumer can re-send the same flow.
+	Params json.RawMessage `json:"params,omitempty"`
 	// Payment (order_details) buttons only.
 	ReferenceID string  `json:"reference_id,omitempty"`
 	Currency    string  `json:"currency,omitempty"`
@@ -302,6 +306,9 @@ type ButtonResponsePayload struct {
 	ID    string `json:"id,omitempty"`
 	Title string `json:"title,omitempty"`
 	Type  string `json:"type,omitempty"`
+	// Fields holds the values submitted through a WhatsApp Flow (form),
+	// keyed by the flow's field names. Omitted for plain button replies.
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 // PaymentRequestPayload represents a WhatsApp Pay payment request.
@@ -323,6 +330,8 @@ type NativeFlowButtonParams struct {
 	Title       string `json:"title"`
 	ID          string `json:"id"`
 	FlowID      string `json:"flow_id"`
+	FlowCTA     string `json:"flow_cta"`
+	FlowName    string `json:"flow_name"`
 }
 
 // orderMoney is the {value, offset} amount encoding of WhatsApp order messages:
@@ -491,8 +500,18 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 			item.Phone = params.PhoneNumber
 		case "quick_reply":
 			item.ID = params.ID
-		case "flow":
+		case "flow", "galaxy_message":
+			// WhatsApp Flows (forms). "galaxy_message" is the on-the-wire name
+			// used by the WhatsApp apps, "flow" the Cloud API one.
+			item.Type = "flow"
 			item.ID = params.FlowID
+			// Same precedence as FormatNativeFlowButton: display_text, flow_cta, title.
+			if params.DisplayText == "" && params.FlowCTA != "" {
+				item.Label = params.FlowCTA
+			}
+			if raw := strings.TrimSpace(btn.GetButtonParamsJSON()); json.Valid([]byte(raw)) {
+				item.Params = json.RawMessage(raw)
+			}
 		case "review_and_pay", "payment_info", "review_order":
 			item.Type = "payment"
 			if item.Label == "" {
@@ -643,6 +662,18 @@ func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_N
 		if label != "" {
 			return fmt.Sprintf("🔘 [%s]", label)
 		}
+	case "flow", "galaxy_message":
+		label := params.DisplayText
+		if label == "" {
+			label = params.FlowCTA
+		}
+		if label == "" {
+			label = params.Title
+		}
+		if label == "" {
+			label = "Open form"
+		}
+		return fmt.Sprintf("📝 [%s]", label)
 	case "review_and_pay", "payment_info":
 		// Brazil payment requests (order_details) arrive as this button; the
 		// amount, Pix code and items live in the params, not in any text.
@@ -689,26 +720,86 @@ func ExtractInteractiveResponseText(ir *waE2E.InteractiveResponseMessage) string
 	if ir == nil {
 		return ""
 	}
+	nf := ir.GetNativeFlowResponseMessage()
+	id, title, fields := parseNativeFlowResponse(nf)
+	if len(fields) > 0 {
+		return formatFlowResponse(fields)
+	}
 	if body := ir.GetBody(); body != nil && body.GetText() != "" {
 		return body.GetText()
 	}
-	if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
-		var params struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		}
-		_ = json.Unmarshal([]byte(nf.GetParamsJSON()), &params)
-		if params.Title != "" {
-			return params.Title
-		}
-		if params.ID != "" {
-			return params.ID
-		}
-		if nf.GetName() != "" {
-			return nf.GetName()
-		}
+	if title != "" {
+		return title
+	}
+	if id != "" {
+		return id
+	}
+	if nf.GetName() != "" {
+		return nf.GetName()
 	}
 	return "Button response"
+}
+
+// parseNativeFlowResponse splits a native flow reply's paramsJSON into the
+// button reply fields (id, title) and, for WhatsApp Flow (form) submissions,
+// the submitted values. Flow bookkeeping keys (flow_token, flow_*) and the
+// reply keys themselves are never reported as form fields.
+func parseNativeFlowResponse(nf *waE2E.InteractiveResponseMessage_NativeFlowResponseMessage) (id, title string, fields map[string]any) {
+	if nf == nil {
+		return "", "", nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(nf.GetParamsJSON()), &raw); err != nil {
+		return "", "", nil
+	}
+	if v, ok := raw["id"].(string); ok {
+		id = v
+	}
+	if v, ok := raw["title"].(string); ok {
+		title = v
+	}
+	// Only Flow submissions carry form values; a plain button reply may have
+	// extra keys (description, ...) that are not user input.
+	if name := nf.GetName(); name != "flow" && name != "galaxy_message" {
+		return id, title, nil
+	}
+	for k, v := range raw {
+		switch {
+		case k == "id", k == "title", k == "flow_token", strings.HasPrefix(k, "flow_"):
+			continue
+		}
+		if fields == nil {
+			fields = map[string]any{}
+		}
+		fields[k] = v
+	}
+	return id, title, fields
+}
+
+// formatFlowResponse renders submitted form values one per line, keys sorted
+// so the output is stable.
+func formatFlowResponse(fields map[string]any) string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := []string{"📝 Form response"}
+	for _, k := range keys {
+		var value string
+		switch v := fields[k].(type) {
+		case string:
+			value = v
+		default:
+			encoded, err := json.Marshal(v)
+			if err != nil {
+				continue
+			}
+			value = string(encoded)
+		}
+		lines = append(lines, "  "+k+": "+value)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ExtractButtonResponse extracts structured button response details from an InteractiveResponseMessage.
@@ -726,16 +817,20 @@ func ExtractButtonResponse(ir *waE2E.InteractiveResponseMessage) *ButtonResponse
 		if nf.GetName() != "" {
 			resp.Type = nf.GetName()
 		}
-		var params struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
+		id, title, fields := parseNativeFlowResponse(nf)
+		if id != "" {
+			resp.ID = id
 		}
-		_ = json.Unmarshal([]byte(nf.GetParamsJSON()), &params)
-		if params.ID != "" {
-			resp.ID = params.ID
+		if title != "" && resp.Title == "" {
+			resp.Title = title
 		}
-		if params.Title != "" && resp.Title == "" {
-			resp.Title = params.Title
+		if len(fields) > 0 {
+			resp.Fields = fields
+			// Flow submissions carry a placeholder body ("Sent"); the values
+			// are the content.
+			if resp.Type == "galaxy_message" {
+				resp.Type = "flow"
+			}
 		}
 	}
 	return resp

@@ -1814,6 +1814,100 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorInternalServer'
+  /send/interactive:
+    post:
+      operationId: sendInteractive
+      tags:
+        - send
+      summary: Send Interactive Message (native buttons / form)
+      description: |
+        Send an interactive message: optional header title, body and footer text plus 1 to 10
+        native flow buttons. Each button has a `name` (the WhatsApp button type) and `params`
+        (its `buttonParamsJSON` object), passed through verbatim:
+
+        - `cta_url`: `{"display_text": "...", "url": "https://..."}`
+        - `cta_copy`: `{"display_text": "...", "copy_code": "..."}`
+        - `cta_call`: `{"display_text": "...", "phone_number": "+55..."}`
+        - `quick_reply`: `{"display_text": "...", "id": "..."}`
+        - `galaxy_message`: a WhatsApp Flow / form. The params must come from a form the
+          sending account owns (e.g. the `buttons[].params` object the webhook reports for a
+          form sent from the WhatsApp Business app): `flow_id`, `flow_token`, `flow_cta`,
+          `flow_action`, `flow_message_version`, `flow_action_payload`, ...
+
+        Rendering on the recipient's side is decided by WhatsApp; unsupported combinations may
+        show as an unsupported message.
+      parameters:
+        - $ref: '#/components/parameters/DeviceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                  example: '6289685024051@s.whatsapp.net'
+                  description: Phone number with country code
+                header:
+                  type: string
+                  example: 'Campanha'
+                  description: Optional header title
+                body:
+                  type: string
+                  example: 'Colher a experiência do evento'
+                  description: Body text (required unless header or footer is set)
+                footer:
+                  type: string
+                  example: 'Responde quando puderes'
+                  description: Optional footer text
+                buttons:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  description: Native flow buttons
+                  items:
+                    type: object
+                    required: [name, params]
+                    properties:
+                      name:
+                        type: string
+                        example: 'cta_url'
+                        description: Button type (cta_url, cta_copy, cta_call, quick_reply, galaxy_message, ...)
+                      params:
+                        type: object
+                        description: The button's buttonParamsJSON object, passed through verbatim
+                        example: {"display_text": "Site", "url": "https://example.com"}
+                is_forwarded:
+                  type: boolean
+                  example: false
+                  description: Whether this is a forwarded message
+                duration:
+                  type: integer
+                  example: 86400
+                  description: "Disappearing message duration in seconds. Allowed values: 0 (no expiry), 86400 (24h), 604800 (7d), 7776000 (90d)."
+              required:
+                - phone
+                - buttons
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBadRequest'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorInternalServer'
   /send/presence:
     post:
       operationId: sendPresence

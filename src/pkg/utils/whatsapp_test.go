@@ -944,6 +944,19 @@ func TestFlowButtonsAndResponses(t *testing.T) {
 		}
 	})
 
+	t.Run("directionality marks are stripped from labels", func(t *testing.T) {
+		b := button("galaxy_message", `{"flow_id":"1","flow_cta":"\u200eComplete form"}`)
+		if got := FormatNativeFlowButton(b); got != "📝 [Complete form]" {
+			t.Errorf("text = %q", got)
+		}
+		im := &waE2E.InteractiveMessage{InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+			Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{b},
+		}}}
+		if got := ExtractButtonsFromInteractive(im)[0].Label; got != "Complete form" {
+			t.Errorf("label = %q", got)
+		}
+	})
+
 	t.Run("flow_cta wins over title for the structured label", func(t *testing.T) {
 		im := &waE2E.InteractiveMessage{InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
 			Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button("galaxy_message", `{"flow_id":"1","flow_cta":"Responder","title":"Formulário"}`)},

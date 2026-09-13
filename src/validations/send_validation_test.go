@@ -2,6 +2,7 @@ package validations
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"mime/multipart"
 	"strconv"
@@ -1186,6 +1187,59 @@ func TestValidateForwardMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateForwardMessage(context.Background(), tt.args.request)
 			assert.Equal(t, tt.err, err)
+		})
+	}
+}
+
+func TestValidateSendInteractive(t *testing.T) {
+	button := func(name, params string) domainSend.InteractiveButton {
+		return domainSend.InteractiveButton{Name: name, Params: json.RawMessage(params)}
+	}
+	ok := domainSend.InteractiveRequest{
+		BaseRequest: domainSend.BaseRequest{Phone: "6289685024051@s.whatsapp.net"},
+		Body:        "Pick one",
+		Buttons:     []domainSend.InteractiveButton{button("cta_url", `{"display_text":"Site","url":"https://example.com"}`)},
+	}
+	tooMany := ok
+	tooMany.Buttons = nil
+	for i := 0; i < 11; i++ {
+		tooMany.Buttons = append(tooMany.Buttons, button("quick_reply", `{"display_text":"x","id":"x"}`))
+	}
+	tests := []struct {
+		name    string
+		mutate  func(r *domainSend.InteractiveRequest)
+		wantErr string
+	}{
+		{name: "valid", mutate: func(r *domainSend.InteractiveRequest) {}},
+		{name: "header only is enough text", mutate: func(r *domainSend.InteractiveRequest) { r.Body = ""; r.Header = "Title" }},
+		{name: "missing phone", mutate: func(r *domainSend.InteractiveRequest) { r.Phone = "" }, wantErr: "phone"},
+		{name: "no text at all", mutate: func(r *domainSend.InteractiveRequest) { r.Body = " " }, wantErr: "body: cannot be blank"},
+		{name: "no buttons", mutate: func(r *domainSend.InteractiveRequest) { r.Buttons = nil }, wantErr: "buttons: cannot be blank"},
+		{name: "too many buttons", mutate: func(r *domainSend.InteractiveRequest) { r.Buttons = tooMany.Buttons }, wantErr: "no more than 10"},
+		{name: "button without name", mutate: func(r *domainSend.InteractiveRequest) { r.Buttons = []domainSend.InteractiveButton{button(" ", `{}`)} }, wantErr: "buttons[0].name"},
+		{name: "button without params", mutate: func(r *domainSend.InteractiveRequest) { r.Buttons = []domainSend.InteractiveButton{{Name: "cta_url"}} }, wantErr: "buttons[0].params: cannot be blank"},
+		{name: "params not an object", mutate: func(r *domainSend.InteractiveRequest) {
+			r.Buttons = []domainSend.InteractiveButton{button("cta_url", `["x"]`)}
+		}, wantErr: "must be a JSON object"},
+		{name: "invalid duration", mutate: func(r *domainSend.InteractiveRequest) { d := 123; r.Duration = &d }, wantErr: "duration must be one of"},
+		{name: "valid duration", mutate: func(r *domainSend.InteractiveRequest) { d := 604800; r.Duration = &d }},
+		{name: "params invalid json", mutate: func(r *domainSend.InteractiveRequest) {
+			r.Buttons = []domainSend.InteractiveButton{button("cta_url", `{`)}
+		}, wantErr: "must be a JSON object"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := ok
+			r.Buttons = append([]domainSend.InteractiveButton(nil), ok.Buttons...)
+			tt.mutate(&r)
+			err := ValidateSendInteractive(context.Background(), r)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
 		})
 	}
 }

@@ -334,6 +334,12 @@ type NativeFlowButtonParams struct {
 	FlowName    string `json:"flow_name"`
 }
 
+// cleanButtonLabel drops the invisible directionality marks (U+200E/U+200F)
+// the WhatsApp apps prepend to some button labels ("\u200eComplete form").
+func cleanButtonLabel(label string) string {
+	return strings.TrimSpace(strings.NewReplacer("\u200e", "", "\u200f", "").Replace(label))
+}
+
 // orderMoney is the {value, offset} amount encoding of WhatsApp order messages:
 // the amount is value / offset (offset 100 for BRL cents).
 type orderMoney struct {
@@ -475,6 +481,7 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 		name := btn.GetName()
 		var params NativeFlowButtonParams
 		_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &params)
+		params.DisplayText, params.Title, params.FlowCTA = cleanButtonLabel(params.DisplayText), cleanButtonLabel(params.Title), cleanButtonLabel(params.FlowCTA)
 
 		label := params.DisplayText
 		if label == "" {
@@ -628,6 +635,7 @@ func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_N
 
 	var params NativeFlowButtonParams
 	_ = json.Unmarshal([]byte(button.GetButtonParamsJSON()), &params)
+	params.DisplayText, params.Title, params.FlowCTA = cleanButtonLabel(params.DisplayText), cleanButtonLabel(params.Title), cleanButtonLabel(params.FlowCTA)
 
 	switch name {
 	case "cta_url":

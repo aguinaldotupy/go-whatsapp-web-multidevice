@@ -23,6 +23,7 @@ func InitRestSend(app fiber.Router, service domainSend.ISendUsecase) Send {
 	app.Post("/send/location", rest.SendLocation)
 	app.Post("/send/audio", rest.SendAudio)
 	app.Post("/send/poll", rest.SendPoll)
+	app.Post("/send/interactive", rest.SendInteractive)
 	app.Post("/send/presence", rest.SendPresence)
 	app.Post("/send/chat-presence", rest.SendChatPresence)
 	return rest
@@ -259,6 +260,24 @@ func (controller *Send) SendChatPresence(c fiber.Ctx) error {
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendChatPresence(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
+	utils.PanicIfNeeded(err)
+
+	return c.JSON(utils.ResponseData{
+		Status:  200,
+		Code:    "SUCCESS",
+		Message: response.Status,
+		Results: response,
+	})
+}
+
+func (controller *Send) SendInteractive(c fiber.Ctx) error {
+	var request domainSend.InteractiveRequest
+	err := c.Bind().Body(&request)
+	utils.PanicIfNeeded(err)
+
+	utils.SanitizePhone(&request.Phone)
+
+	response, err := controller.Service.SendInteractive(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
 	utils.PanicIfNeeded(err)
 
 	return c.JSON(utils.ResponseData{

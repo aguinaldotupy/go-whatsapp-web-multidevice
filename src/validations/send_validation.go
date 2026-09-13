@@ -2,6 +2,7 @@ package validations
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -541,5 +542,43 @@ func ValidateForwardMessage(ctx context.Context, request domainSend.ForwardReque
 		return err
 	}
 
+	return nil
+}
+
+// maxInteractiveButtons mirrors the limit WhatsApp clients render for native
+// flow buttons.
+const maxInteractiveButtons = 10
+
+func ValidateSendInteractive(ctx context.Context, request domainSend.InteractiveRequest) error {
+	err := validation.ValidateStructWithContext(ctx, &request,
+		validation.Field(&request.Phone, validation.Required),
+	)
+	if err != nil {
+		return pkgError.ValidationError(err.Error())
+	}
+	if err := validateDuration(request.Duration); err != nil {
+		return err
+	}
+	if strings.TrimSpace(request.Header) == "" && strings.TrimSpace(request.Body) == "" && strings.TrimSpace(request.Footer) == "" {
+		return pkgError.ValidationError("body: cannot be blank when header and footer are blank.")
+	}
+	if len(request.Buttons) == 0 {
+		return pkgError.ValidationError("buttons: cannot be blank.")
+	}
+	if len(request.Buttons) > maxInteractiveButtons {
+		return pkgError.ValidationError(fmt.Sprintf("buttons: the length must be no more than %d.", maxInteractiveButtons))
+	}
+	for i, button := range request.Buttons {
+		if strings.TrimSpace(button.Name) == "" {
+			return pkgError.ValidationError(fmt.Sprintf("buttons[%d].name: cannot be blank.", i))
+		}
+		if len(button.Params) == 0 {
+			return pkgError.ValidationError(fmt.Sprintf("buttons[%d].params: cannot be blank.", i))
+		}
+		var object map[string]any
+		if json.Unmarshal(button.Params, &object) != nil || object == nil {
+			return pkgError.ValidationError(fmt.Sprintf("buttons[%d].params: must be a JSON object.", i))
+		}
+	}
 	return nil
 }

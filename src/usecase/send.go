@@ -2006,3 +2006,78 @@ func (service serviceSend) getDefaultEphemeralExpiration(jid string) (expiration
 
 	return expiration
 }
+
+// buildInteractiveMessage assembles the proto for SendInteractive. Button
+// params are passed through as given; the client renders them per button name.
+// DeviceListMetadata is set the way the official clients do for interactive
+// messages, otherwise some recipients drop the message.
+func buildInteractiveMessage(request domainSend.InteractiveRequest) *waE2E.Message {
+	im := &waE2E.InteractiveMessage{}
+	if header := strings.TrimSpace(request.Header); header != "" {
+		im.Header = &waE2E.InteractiveMessage_Header{Title: proto.String(header), HasMediaAttachment: proto.Bool(false)}
+	}
+	if body := strings.TrimSpace(request.Body); body != "" {
+		im.Body = &waE2E.InteractiveMessage_Body{Text: proto.String(body)}
+	}
+	if footer := strings.TrimSpace(request.Footer); footer != "" {
+		im.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(footer)}
+	}
+	buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, 0, len(request.Buttons))
+	for _, button := range request.Buttons {
+		buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+			Name:             proto.String(strings.TrimSpace(button.Name)),
+			ButtonParamsJSON: proto.String(string(button.Params)),
+		})
+	}
+	im.InteractiveMessage = &waE2E.InteractiveMessage_NativeFlowMessage_{
+		NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+			Buttons:        buttons,
+			MessageVersion: proto.Int32(1),
+		},
+	}
+	if request.BaseRequest.Duration != nil && *request.BaseRequest.Duration > 0 {
+		im.ContextInfo = &waE2E.ContextInfo{Expiration: proto.Uint32(uint32(*request.BaseRequest.Duration))}
+	}
+	if request.BaseRequest.IsForwarded {
+		if im.ContextInfo == nil {
+			im.ContextInfo = &waE2E.ContextInfo{}
+		}
+		im.ContextInfo.IsForwarded = proto.Bool(true)
+		im.ContextInfo.ForwardingScore = proto.Uint32(100)
+	}
+	return &waE2E.Message{
+		InteractiveMessage: im,
+		MessageContextInfo: &waE2E.MessageContextInfo{
+			DeviceListMetadata:        &waE2E.DeviceListMetadata{},
+			DeviceListMetadataVersion: proto.Int32(2),
+		},
+	}
+}
+
+func (service serviceSend) SendInteractive(ctx context.Context, request domainSend.InteractiveRequest) (response domainSend.GenericResponse, err error) {
+	if err = validations.ValidateSendInteractive(ctx, request); err != nil {
+		return response, err
+	}
+
+	client := whatsapp.ClientFromContext(ctx)
+	if client == nil {
+		return response, pkgError.ErrWaCLI
+	}
+
+	dataWaRecipient, err := utils.ValidateJidWithLogin(client, request.BaseRequest.Phone)
+	if err != nil {
+		return response, err
+	}
+
+	msg := buildInteractiveMessage(request)
+	content := utils.FormatInteractiveMessageSummary(msg.GetInteractiveMessage())
+
+	ts, err := service.wrapSendMessage(ctx, client, dataWaRecipient, msg, content)
+	if err != nil {
+		return response, err
+	}
+
+	response.MessageID = ts.ID
+	response.Status = fmt.Sprintf("Send interactive success %s (server timestamp: %s)", request.BaseRequest.Phone, ts.Timestamp.String())
+	return response, nil
+}

@@ -875,6 +875,110 @@ func TestOrderDetailsButtons(t *testing.T) {
 	})
 }
 
+// WhatsApp Flows (forms) arrive as a native flow button named galaxy_message
+// (the apps) or flow (Cloud API); the button label is flow_cta. A submission
+// comes back as a native flow response whose params are the form values plus
+// flow bookkeeping keys.
+func TestFlowButtonsAndResponses(t *testing.T) {
+	button := func(name, params string) *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton {
+		return &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{Name: proto.String(name), ButtonParamsJSON: proto.String(params)}
+	}
+	flowParams := `{"flow_message_version":"3","flow_token":"tok-123","flow_id":"1234567890","flow_cta":"Responder","flow_action":"navigate","flow_action_payload":{"screen":"QUESTION_ONE"}}`
+
+	t.Run("flow button renders its cta", func(t *testing.T) {
+		if got := FormatNativeFlowButton(button("galaxy_message", flowParams)); got != "📝 [Responder]" {
+			t.Errorf("got %q", got)
+		}
+		if got := FormatNativeFlowButton(button("flow", `{}`)); got != "📝 [Open form]" {
+			t.Errorf("empty params: got %q", got)
+		}
+	})
+
+	t.Run("interactive message with flow button", func(t *testing.T) {
+		im := &waE2E.InteractiveMessage{
+			Body: &waE2E.InteractiveMessage_Body{Text: proto.String("Colher a experiência do evento")},
+			InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button("galaxy_message", flowParams)},
+			}},
+		}
+		if got := FormatInteractiveMessageSummary(im); got != "Colher a experiência do evento\n📝 [Responder]" {
+			t.Errorf("summary = %q", got)
+		}
+		buttons := ExtractButtonsFromInteractive(im)
+		if len(buttons) != 1 || buttons[0].Type != "flow" || buttons[0].Label != "Responder" || buttons[0].ID != "1234567890" {
+			t.Errorf("buttons = %+v", buttons)
+		}
+	})
+
+	t.Run("form submission renders and exposes the fields", func(t *testing.T) {
+		ir := &waE2E.InteractiveResponseMessage{
+			Body: &waE2E.InteractiveResponseMessage_Body{Text: proto.String("Sent")},
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+					Name:       proto.String("galaxy_message"),
+					ParamsJSON: proto.String(`{"flow_token":"tok-123","nome":"Ana","avaliacao":"5","interesses":["podcast","evento"]}`),
+				},
+			},
+		}
+		want := "📝 Form response\n  avaliacao: 5\n  interesses: [\"podcast\",\"evento\"]\n  nome: Ana"
+		if got := ExtractInteractiveResponseText(ir); got != want {
+			t.Errorf("text = %q, want %q", got, want)
+		}
+		resp := ExtractButtonResponse(ir)
+		if resp.Type != "flow" || resp.Title != "Sent" || resp.ID != "" {
+			t.Errorf("response = %+v", resp)
+		}
+		if len(resp.Fields) != 3 || resp.Fields["nome"] != "Ana" || resp.Fields["avaliacao"] != "5" {
+			t.Errorf("fields = %+v", resp.Fields)
+		}
+		if _, leaked := resp.Fields["flow_token"]; leaked {
+			t.Error("flow_token must not be exposed as a field")
+		}
+	})
+
+	t.Run("flow_cta wins over title for the structured label", func(t *testing.T) {
+		im := &waE2E.InteractiveMessage{InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+			Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button("galaxy_message", `{"flow_id":"1","flow_cta":"Responder","title":"Formulário"}`)},
+		}}}
+		if got := ExtractButtonsFromInteractive(im)[0].Label; got != "Responder" {
+			t.Errorf("label = %q", got)
+		}
+	})
+
+	t.Run("extra keys on a plain reply are not form fields", func(t *testing.T) {
+		ir := &waE2E.InteractiveResponseMessage{InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+			NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+				Name:       proto.String("single_select"),
+				ParamsJSON: proto.String(`{"id":"opt_1","title":"Option 1","description":"First option"}`),
+			},
+		}}
+		if got := ExtractInteractiveResponseText(ir); got != "Option 1" {
+			t.Errorf("text = %q", got)
+		}
+		if resp := ExtractButtonResponse(ir); resp.Fields != nil {
+			t.Errorf("fields = %+v, want none", resp.Fields)
+		}
+	})
+
+	t.Run("plain button reply is unchanged", func(t *testing.T) {
+		ir := &waE2E.InteractiveResponseMessage{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+					Name:       proto.String("quick_reply"),
+					ParamsJSON: proto.String(`{"id":"btn_yes","title":"Yes"}`),
+				},
+			},
+		}
+		if got := ExtractInteractiveResponseText(ir); got != "Yes" {
+			t.Errorf("text = %q", got)
+		}
+		resp := ExtractButtonResponse(ir)
+		if resp.Type != "quick_reply" || resp.ID != "btn_yes" || resp.Title != "Yes" || resp.Fields != nil {
+			t.Errorf("response = %+v", resp)
+		}
+	})
+}
+
 func TestExtractButtonsFromInteractive(t *testing.T) {
 	im := &waE2E.InteractiveMessage{
 		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{

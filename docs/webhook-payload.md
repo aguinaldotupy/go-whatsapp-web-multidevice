@@ -1346,7 +1346,7 @@ flows, carousels) arrive as an interactive message:
 | `value`   | string   | Code copied by a `cta_copy` button |
 | `url`     | string   | Target of a `cta_url` button |
 | `phone`   | string   | Number dialed by a `cta_call` button |
-| `id`      | string   | Reply ID of a `quick_reply` button, or flow ID of a `flow` button |
+| `id`      | string   | Reply ID of a `quick_reply` button, or flow ID of a `flow` button (WhatsApp Flow / form; the apps send it as `galaxy_message`, reported as `flow`, with the label taken from `flow_cta`) |
 | `reference_id` | string | `payment` buttons: the order's `reference_id` |
 | `currency` | string  | `payment` buttons: ISO 4217 code (`BRL`) |
 | `amount`  | number   | `payment` buttons: order total (`total_amount.value / offset`) |
@@ -1404,10 +1404,20 @@ response:
 |-----------|----------|-----------------|
 | `id`      | string   | `id` from the response parameters. Omitted when absent. |
 | `title`   | string   | Response body text, falling back to the `title` parameter. Omitted when absent. |
-| `type`    | string   | Native-flow response name, or `interactive_response` when there is none |
+| `type`    | string   | Native-flow response name, or `interactive_response` when there is none; `flow` for a submitted WhatsApp Flow (form) |
+| `fields`  | object   | Submitted form values keyed by field name (WhatsApp Flow submissions only). Flow bookkeeping keys (`flow_token`, `flow_*`) are stripped. |
 
 `body` is the response text, falling back to the `title` parameter, then `id`, then the
-response name, then `Button response`.
+response name, then `Button response`. For a submitted WhatsApp Flow the values are the
+content, so `body` renders them instead (the reply's own text is just `Sent`):
+
+```
+📝 Form response
+  avaliacao: 5
+  nome: Ana
+```
+
+Keys are sorted; non-string values are JSON-encoded.
 
 Legacy button, list and template-button replies carry no structured field; their `body` is the
 selected option's text.

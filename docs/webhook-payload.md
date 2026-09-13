@@ -1406,19 +1406,24 @@ response:
 | `id`      | string   | `id` from the response parameters. Omitted when absent. |
 | `title`   | string   | Response body text, falling back to the `title` parameter. Omitted when absent. |
 | `type`    | string   | Native-flow response name, or `interactive_response` when there is none; `flow` for a submitted WhatsApp Flow (form) |
-| `fields`  | object   | Submitted form values keyed by field name (WhatsApp Flow submissions only). Flow bookkeeping keys (`flow_token`, `flow_*`) are stripped. |
+| `fields`  | object   | Submitted form values keyed by field name (WhatsApp Flow submissions only). Flow bookkeeping keys (`flow_token`, `flow_*`) are stripped. Unanswered fields are `""`. |
+| `labels`  | object   | Field name → human-readable label, for forms built in the WhatsApp Business app |
+| `flow_name` | string | The form's name, when the submission carries it; `id` is then the `flow_id` |
 
 `body` is the response text, falling back to the `title` parameter, then `id`, then the
 response name, then `Button response`. For a submitted WhatsApp Flow the values are the
 content, so `body` renders them instead (the reply's own text is just `Sent`):
 
 ```
-📝 Form response
-  avaliacao: 5
-  nome: Ana
+📝 Form response: custom_form_be6b3e
+  Experiência do Evento: —
+  Atendimento: Top
+  Autógrafo: Top
 ```
 
-Keys are sorted; non-string values are JSON-encoded.
+For forms built in the WhatsApp Business app the fields render in form order with their labels
+(blank answers as `—`). Other Flow submissions render `key: value` with keys sorted and
+non-string values JSON-encoded.
 
 Legacy button, list and template-button replies carry no structured field; their `body` is the
 selected option's text.

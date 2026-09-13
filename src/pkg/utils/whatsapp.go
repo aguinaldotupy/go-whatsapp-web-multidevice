@@ -309,6 +309,11 @@ type ButtonResponsePayload struct {
 	// Fields holds the values submitted through a WhatsApp Flow (form),
 	// keyed by the flow's field names. Omitted for plain button replies.
 	Fields map[string]any `json:"fields,omitempty"`
+	// Labels maps the same field names to their human-readable labels, when
+	// the submission carries them (forms built in the WhatsApp Business app).
+	Labels map[string]string `json:"labels,omitempty"`
+	// FlowName is the form's name, when the submission carries it.
+	FlowName string `json:"flow_name,omitempty"`
 }
 
 // PaymentRequestPayload represents a WhatsApp Pay payment request.
@@ -730,6 +735,9 @@ func ExtractInteractiveResponseText(ir *waE2E.InteractiveResponseMessage) string
 	}
 	nf := ir.GetNativeFlowResponseMessage()
 	id, title, fields := parseNativeFlowResponse(nf)
+	if form := parseBusinessAppFormResponse(fields); form != nil {
+		return form.text()
+	}
 	if len(fields) > 0 {
 		return formatFlowResponse(fields)
 	}
@@ -782,6 +790,89 @@ func parseNativeFlowResponse(nf *waE2E.InteractiveResponseMessage_NativeFlowResp
 		fields[k] = v
 	}
 	return id, title, fields
+}
+
+// businessAppFormResponse is a submission of a form built in the WhatsApp
+// Business app. Those arrive with a single wa_flow_response_params key whose
+// response_message is a JSON document of screens and components.
+type businessAppFormResponse struct {
+	FlowID   string
+	FlowName string
+	Fields   []businessAppFormField
+}
+
+type businessAppFormField struct {
+	Name  string
+	Label string
+	Value string
+}
+
+// parseBusinessAppFormResponse recognises the Business-app form submission
+// format inside the generic flow fields; nil when the fields are anything else.
+func parseBusinessAppFormResponse(fields map[string]any) *businessAppFormResponse {
+	raw, ok := fields["wa_flow_response_params"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	form := &businessAppFormResponse{}
+	form.FlowID, _ = raw["flow_id"].(string)
+	form.FlowName, _ = raw["flow_name"].(string)
+	message, _ := raw["response_message"].(string)
+	var doc struct {
+		Screens []struct {
+			Components []struct {
+				Name  string `json:"name"`
+				Label string `json:"label"`
+				Value any    `json:"value"`
+			} `json:"components"`
+		} `json:"screens"`
+	}
+	if message == "" || json.Unmarshal([]byte(message), &doc) != nil {
+		return form
+	}
+	for _, screen := range doc.Screens {
+		for _, c := range screen.Components {
+			if c.Name == "" && c.Label == "" {
+				continue
+			}
+			field := businessAppFormField{Name: c.Name, Label: cleanButtonLabel(c.Label)}
+			switch v := c.Value.(type) {
+			case nil:
+			case string:
+				field.Value = v
+			default:
+				if encoded, err := json.Marshal(v); err == nil {
+					field.Value = string(encoded)
+				}
+			}
+			if field.Name == "" {
+				field.Name = field.Label
+			}
+			form.Fields = append(form.Fields, field)
+		}
+	}
+	return form
+}
+
+// text renders the submission as "label: value" lines in form order; blank
+// answers show as a dash so the field is still visible.
+func (f *businessAppFormResponse) text() string {
+	lines := []string{"📝 Form response"}
+	if f.FlowName != "" {
+		lines[0] += ": " + f.FlowName
+	}
+	for _, field := range f.Fields {
+		label := field.Label
+		if label == "" {
+			label = field.Name
+		}
+		value := field.Value
+		if strings.TrimSpace(value) == "" {
+			value = "—"
+		}
+		lines = append(lines, "  "+label+": "+value)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // formatFlowResponse renders submitted form values one per line, keys sorted
@@ -838,6 +929,21 @@ func ExtractButtonResponse(ir *waE2E.InteractiveResponseMessage) *ButtonResponse
 			// are the content.
 			if resp.Type == "galaxy_message" {
 				resp.Type = "flow"
+			}
+			if form := parseBusinessAppFormResponse(fields); form != nil {
+				resp.ID = form.FlowID
+				resp.FlowName = form.FlowName
+				resp.Fields = make(map[string]any, len(form.Fields))
+				resp.Labels = make(map[string]string, len(form.Fields))
+				for _, field := range form.Fields {
+					resp.Fields[field.Name] = field.Value
+					if field.Label != "" {
+						resp.Labels[field.Name] = field.Label
+					}
+				}
+				if len(resp.Labels) == 0 {
+					resp.Labels = nil
+				}
 			}
 		}
 	}

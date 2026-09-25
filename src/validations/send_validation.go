@@ -83,9 +83,12 @@ func ValidateSendMessage(ctx context.Context, request domainSend.MessageRequest)
 		return err
 	}
 
-	// Validate mentions if provided
-	for _, mention := range request.Mentions {
-		// Skip validation for special @everyone keyword
+	return validateMentions(request.Mentions)
+}
+
+// validateMentions checks explicit (ghost) mentions; "@everyone" is a keyword, not a phone.
+func validateMentions(mentions []string) error {
+	for _, mention := range mentions {
 		if mention == "@everyone" {
 			continue
 		}
@@ -93,7 +96,6 @@ func ValidateSendMessage(ctx context.Context, request domainSend.MessageRequest)
 			return pkgError.ValidationError(fmt.Sprintf("mention %s: phone number must be in international format", mention))
 		}
 	}
-
 	return nil
 }
 
@@ -143,7 +145,7 @@ func ValidateSendImage(ctx context.Context, request domainSend.ImageRequest) err
 		return err
 	}
 
-	return nil
+	return validateMentions(request.Mentions)
 }
 
 func ValidateSendSticker(ctx context.Context, request domainSend.StickerRequest) error {
@@ -240,7 +242,7 @@ func ValidateSendFile(ctx context.Context, request domainSend.FileRequest) error
 		return err
 	}
 
-	return nil
+	return validateMentions(request.Mentions)
 }
 
 func ValidateSendVideo(ctx context.Context, request domainSend.VideoRequest) error {
@@ -297,7 +299,7 @@ func ValidateSendVideo(ctx context.Context, request domainSend.VideoRequest) err
 		return err
 	}
 
-	return nil
+	return validateMentions(request.Mentions)
 }
 
 func ValidateSendContact(ctx context.Context, request domainSend.ContactRequest) error {

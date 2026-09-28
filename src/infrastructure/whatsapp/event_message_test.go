@@ -569,6 +569,63 @@ func TestBuildEventPayloadIncludesSenderDisplayName(t *testing.T) {
 	}
 }
 
+func TestBuildEventPayloadSenderContactName(t *testing.T) {
+	accountJID := types.NewJID("628111111111", types.DefaultUserServer)
+	savedJID := types.NewJID("628123456789", types.DefaultUserServer)
+	unsavedJID := types.NewJID("628987654321", types.DefaultUserServer)
+	client := &whatsmeow.Client{
+		Store: &store.Device{
+			ID:       &accountJID,
+			PushName: "Active Account",
+			Contacts: &senderDisplayNameContactGetter{
+				contacts: map[types.JID]types.ContactInfo{
+					savedJID:   {Found: true, FullName: "Saved Contact", PushName: "Stored Push"},
+					unsavedJID: {Found: true, PushName: "Stored Push"},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		sender   types.JID
+		isFromMe bool
+		want     any
+		present  bool
+	}{
+		{name: "saved sender", sender: savedJID, want: "Saved Contact", present: true},
+		{name: "unsaved sender is explicit empty", sender: unsavedJID, want: "", present: true},
+		{name: "outgoing message omits the field", sender: accountJID, isFromMe: true, present: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evt := &events.Message{
+				Info: types.MessageInfo{
+					MessageSource: types.MessageSource{
+						Chat:     types.NewJID("628100000000", types.DefaultUserServer),
+						Sender:   tt.sender,
+						IsFromMe: tt.isFromMe,
+					},
+					ID:        "sender-contact-name",
+					PushName:  "Live Push",
+					Timestamp: time.Date(2026, time.September, 28, 10, 0, 0, 0, time.UTC),
+				},
+				Message: &waE2E.Message{Conversation: protoString("hello")},
+			}
+
+			_, payload, err := buildEventPayload(context.Background(), client, evt)
+
+			assert.NoError(t, err)
+			value, ok := payload["sender_contact_name"]
+			assert.Equal(t, tt.present, ok)
+			if tt.present {
+				assert.Equal(t, tt.want, value)
+			}
+		})
+	}
+}
+
 func TestBuildEventPayloadInteractiveCopyCode(t *testing.T) {
 	code := "PAY-7F3K9Q"
 	evt := &events.Message{

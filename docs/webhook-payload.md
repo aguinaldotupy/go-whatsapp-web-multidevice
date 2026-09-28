@@ -206,6 +206,7 @@ Fields commonly found inside the `payload` object:
 | `from_lid`  | string   | LID (Linked ID) of the sender if available                                    |
 | `sender_display_name` | string | Dynamic human-readable sender label. Present only when `from` is a non-empty string; see [Sender Display Name Resolution](#sender-display-name-resolution). |
 | `from_name` | string   | Legacy message-event push name of the sender. It remains available for compatibility and is not replaced by `sender_display_name`. |
+| `sender_contact_name` | string | Message events, inbound only: the name the account owner saved for the sender in their contact list, or `""` when the sender is not saved. Unlike `sender_display_name` it never falls back to push names or JID digits, so consumers can tell "saved as X" from "not saved". Omitted on outgoing messages. |
 | `timestamp` | string   | RFC3339 formatted timestamp (e.g., `2023-10-15T10:30:00Z`)                    |
 | `is_from_me` | boolean | Whether the message was sent by the current user                              |
 

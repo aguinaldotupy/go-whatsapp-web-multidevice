@@ -161,6 +161,37 @@ func hasDisplayName(value string) bool {
 	return strings.TrimSpace(value) != ""
 }
 
+// SavedContactName returns only the name the account owner saved for
+// senderJID in their contact list, or "" when the sender is not saved. Unlike
+// Resolve it never falls back to push names or JID digits, so a consumer can
+// tell "saved as X" apart from "not saved".
+func (r *SenderDisplayNameResolver) SavedContactName(ctx context.Context, senderJID string) string {
+	jid, validJID := r.normalizeJID(ctx, senderJID)
+	if !validJID || r.contacts == nil || r.isAccountJID(ctx, jid) {
+		return ""
+	}
+	contact, err := r.contacts.GetContact(ctx, jid)
+	if err != nil || !contact.Found || !hasDisplayName(contact.FullName) {
+		return ""
+	}
+	return contact.FullName
+}
+
+// addSenderContactName adds sender_contact_name to inbound message payloads:
+// the saved contact name only, empty when the sender is not saved. Outgoing
+// messages are skipped because the sender is the account itself.
+func addSenderContactName(ctx context.Context, client *whatsmeow.Client, payload map[string]any, isFromMe bool) {
+	if isFromMe {
+		return
+	}
+	senderJID, ok := payload["from"].(string)
+	if !ok || senderJID == "" {
+		return
+	}
+
+	payload["sender_contact_name"] = NewSenderDisplayNameResolver(client, "").SavedContactName(ctx, senderJID)
+}
+
 func addSenderDisplayName(ctx context.Context, client *whatsmeow.Client, payload map[string]any, isFromMe bool, livePushName string) {
 	senderJID, ok := payload["from"].(string)
 	if !ok || senderJID == "" {

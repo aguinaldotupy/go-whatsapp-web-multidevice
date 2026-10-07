@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"regexp"
@@ -360,6 +361,8 @@ func buildOptionalFields(ctx context.Context, client *whatsmeow.Client, evt *eve
 }
 
 func buildMediaFields(ctx context.Context, client *whatsmeow.Client, msg *waE2E.Message, payload map[string]any) error {
+	headerDoc, headerImg, headerVid := utils.ExtractHeaderMedia(msg)
+
 	if audioMedia := msg.GetAudioMessage(); audioMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
 			extracted, err := utils.ExtractMedia(ctx, client, config.PathMedia, audioMedia)
@@ -378,7 +381,7 @@ func buildMediaFields(ctx context.Context, client *whatsmeow.Client, msg *waE2E.
 		}
 	}
 
-	if documentMedia := msg.GetDocumentMessage(); documentMedia != nil {
+	if documentMedia := cmp.Or(msg.GetDocumentMessage(), headerDoc); documentMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
 			extracted, err := utils.ExtractMedia(ctx, client, config.PathMedia, documentMedia)
 			if err != nil {
@@ -397,7 +400,7 @@ func buildMediaFields(ctx context.Context, client *whatsmeow.Client, msg *waE2E.
 		}
 	}
 
-	if imageMedia := msg.GetImageMessage(); imageMedia != nil {
+	if imageMedia := cmp.Or(msg.GetImageMessage(), headerImg); imageMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
 			extracted, err := utils.ExtractMedia(ctx, client, config.PathMedia, imageMedia)
 			if err != nil {
@@ -434,7 +437,7 @@ func buildMediaFields(ctx context.Context, client *whatsmeow.Client, msg *waE2E.
 		}
 	}
 
-	if videoMedia := msg.GetVideoMessage(); videoMedia != nil {
+	if videoMedia := cmp.Or(msg.GetVideoMessage(), headerVid); videoMedia != nil {
 		if config.WhatsappAutoDownloadMedia {
 			extracted, err := utils.ExtractMedia(ctx, client, config.PathMedia, videoMedia)
 			if err != nil {

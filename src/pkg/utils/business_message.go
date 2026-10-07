@@ -481,3 +481,59 @@ type nativeFlowButtonParams struct {
 func formatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) string {
 	return FormatNativeFlowButton(button)
 }
+
+// ExtractHeaderMedia inspects template messages, buttons messages, and interactive
+// messages for any document, image, or video message carried in their headers.
+func ExtractHeaderMedia(msg *waE2E.Message) (doc *waE2E.DocumentMessage, img *waE2E.ImageMessage, vid *waE2E.VideoMessage) {
+	if msg == nil {
+		return nil, nil, nil
+	}
+	if tm := templateMessage(msg); tm != nil {
+		if h := cmp.Or(tm.GetHydratedTemplate(), tm.GetHydratedFourRowTemplate()); h != nil {
+			if d := h.GetDocumentMessage(); d != nil {
+				return d, nil, nil
+			}
+			if i := h.GetImageMessage(); i != nil {
+				return nil, i, nil
+			}
+			if v := h.GetVideoMessage(); v != nil {
+				return nil, nil, v
+			}
+		} else if im := tm.GetInteractiveMessageTemplate(); im != nil && im.GetHeader() != nil {
+			header := im.GetHeader()
+			if d := header.GetDocumentMessage(); d != nil {
+				return d, nil, nil
+			}
+			if i := header.GetImageMessage(); i != nil {
+				return nil, i, nil
+			}
+			if v := header.GetVideoMessage(); v != nil {
+				return nil, nil, v
+			}
+		}
+	}
+	if bm := msg.GetButtonsMessage(); bm != nil {
+		if d := bm.GetDocumentMessage(); d != nil {
+			return d, nil, nil
+		}
+		if i := bm.GetImageMessage(); i != nil {
+			return nil, i, nil
+		}
+		if v := bm.GetVideoMessage(); v != nil {
+			return nil, nil, v
+		}
+	}
+	if im := msg.GetInteractiveMessage(); im != nil && im.GetHeader() != nil && im.GetCarouselMessage() == nil {
+		header := im.GetHeader()
+		if d := header.GetDocumentMessage(); d != nil {
+			return d, nil, nil
+		}
+		if i := header.GetImageMessage(); i != nil {
+			return nil, i, nil
+		}
+		if v := header.GetVideoMessage(); v != nil {
+			return nil, nil, v
+		}
+	}
+	return nil, nil, nil
+}

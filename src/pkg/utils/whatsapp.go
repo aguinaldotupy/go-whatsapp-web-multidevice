@@ -1009,6 +1009,7 @@ func ExtractMediaCaption(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
 	}
+	msg = UnwrapMessage(msg)
 	if img := msg.GetImageMessage(); img != nil {
 		return img.GetCaption()
 	}
@@ -1020,6 +1021,16 @@ func ExtractMediaCaption(msg *waE2E.Message) string {
 	}
 	if ptv := msg.GetPtvMessage(); ptv != nil {
 		return ptv.GetCaption()
+	}
+	headerDoc, headerImg, headerVid := ExtractHeaderMedia(msg)
+	if headerDoc != nil && headerDoc.GetCaption() != "" {
+		return headerDoc.GetCaption()
+	}
+	if headerImg != nil && headerImg.GetCaption() != "" {
+		return headerImg.GetCaption()
+	}
+	if headerVid != nil && headerVid.GetCaption() != "" {
+		return headerVid.GetCaption()
 	}
 	return ""
 }
@@ -1087,6 +1098,30 @@ func ExtractMediaInfo(msg *waE2E.Message) (mediaType string, filename string, me
 		return "sticker", filename,
 			sticker.GetURL(), sticker.GetDirectPath(), sticker.GetMediaKey(), sticker.GetFileSHA256(),
 			sticker.GetFileEncSHA256(), sticker.GetFileLength()
+	}
+
+	// Check for header media in templates, buttons and interactive messages
+	headerDoc, headerImg, headerVid := ExtractHeaderMedia(msg)
+	if doc := headerDoc; doc != nil {
+		filename = doc.GetFileName()
+		if filename == "" {
+			filename = GenerateMediaFilename("document", "", doc.GetTitle())
+		}
+		return "document", filename,
+			doc.GetURL(), doc.GetDirectPath(), doc.GetMediaKey(), doc.GetFileSHA256(),
+			doc.GetFileEncSHA256(), doc.GetFileLength()
+	}
+	if img := headerImg; img != nil {
+		filename = GenerateMediaFilename("image", "jpg", img.GetCaption())
+		return "image", filename,
+			img.GetURL(), img.GetDirectPath(), img.GetMediaKey(), img.GetFileSHA256(),
+			img.GetFileEncSHA256(), img.GetFileLength()
+	}
+	if vid := headerVid; vid != nil {
+		filename = GenerateMediaFilename("video", "mp4", vid.GetCaption())
+		return "video", filename,
+			vid.GetURL(), vid.GetDirectPath(), vid.GetMediaKey(), vid.GetFileSHA256(),
+			vid.GetFileEncSHA256(), vid.GetFileLength()
 	}
 
 	return "", "", "", "", nil, nil, nil, 0

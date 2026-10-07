@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -175,5 +176,52 @@ func TestChatwootContentForBusinessMessages(t *testing.T) {
 				t.Fatalf("retried content = %q, want %q", retried, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildEventPayloadTemplateWithDocumentHeader(t *testing.T) {
+	origAutoDownload := config.WhatsappAutoDownloadMedia
+	config.WhatsappAutoDownloadMedia = false
+	defer func() { config.WhatsappAutoDownloadMedia = origAutoDownload }()
+	docMsg := &waE2E.DocumentMessage{
+		URL:      proto.String("https://mmg.whatsapp.net/v/t62/boleto.pdf"),
+		Mimetype: proto.String("application/pdf"),
+		Title:    proto.String("boleto_762444.pdf"),
+		FileName: proto.String("boleto_762444.pdf"),
+	}
+	templateMsg := &waE2E.TemplateMessage{
+		TemplateID: proto.String("boleto_tpl"),
+		HydratedTemplate: &waE2E.TemplateMessage_HydratedFourRowTemplate{
+			Title: &waE2E.TemplateMessage_HydratedFourRowTemplate_DocumentMessage{
+				DocumentMessage: docMsg,
+			},
+			HydratedContentText: proto.String("Prezado cliente, seu boleto está disponível."),
+			HydratedFooterText:  proto.String("Caso já tenha pago, desconsidere."),
+		},
+	}
+	_, payload, err := buildEventPayload(context.Background(), nil, businessEvent("BOL1", &waE2E.Message{TemplateMessage: templateMsg}))
+	if err != nil {
+		t.Fatalf("buildEventPayload: %v", err)
+	}
+	doc, ok := payload["document"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected payload[document] to be map, got %T: %+v", payload["document"], payload)
+	}
+	if doc["filename"] != "boleto_762444.pdf" {
+		t.Errorf("expected filename boleto_762444.pdf, got %v", doc["filename"])
+	}
+	if doc["url"] != "https://mmg.whatsapp.net/v/t62/boleto.pdf" {
+		t.Errorf("expected url, got %v", doc["url"])
+	}
+	template, ok := payload["template"].(utils.BusinessMessage)
+	if !ok {
+		t.Fatalf("expected payload[template], got %T", payload["template"])
+	}
+	if template.HeaderType != "document" {
+		t.Errorf("expected header_type document, got %s", template.HeaderType)
+	}
+	wantBody := "Prezado cliente, seu boleto está disponível.\nCaso já tenha pago, desconsidere."
+	if payload["body"] != wantBody {
+		t.Errorf("body = %q, want %q", payload["body"], wantBody)
 	}
 }

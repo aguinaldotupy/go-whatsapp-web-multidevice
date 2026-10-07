@@ -356,6 +356,43 @@ func TestExtractMediaInfoIncludesDirectPath(t *testing.T) {
 			}},
 			wantType: "sticker",
 		},
+		{
+			name: "TemplateDocument",
+			msg: &waE2E.Message{TemplateMessage: &waE2E.TemplateMessage{
+				HydratedTemplate: &waE2E.TemplateMessage_HydratedFourRowTemplate{
+					Title: &waE2E.TemplateMessage_HydratedFourRowTemplate_DocumentMessage{
+						DocumentMessage: &waE2E.DocumentMessage{
+							URL:           proto.String(mediaURL),
+							DirectPath:    proto.String(directPath),
+							MediaKey:      mediaKey,
+							FileSHA256:    fileSHA256,
+							FileEncSHA256: fileEncSHA256,
+							FileLength:    proto.Uint64(fileLength),
+							FileName:      proto.String("boleto.pdf"),
+						},
+					},
+				},
+			}},
+			wantType: "document",
+		},
+		{
+			name: "InteractiveImage",
+			msg: &waE2E.Message{InteractiveMessage: &waE2E.InteractiveMessage{
+				Header: &waE2E.InteractiveMessage_Header{
+					Media: &waE2E.InteractiveMessage_Header_ImageMessage{
+						ImageMessage: &waE2E.ImageMessage{
+							URL:           proto.String(mediaURL),
+							DirectPath:    proto.String(directPath),
+							MediaKey:      mediaKey,
+							FileSHA256:    fileSHA256,
+							FileEncSHA256: fileEncSHA256,
+							FileLength:    proto.Uint64(fileLength),
+						},
+					},
+				},
+			}},
+			wantType: "image",
+		},
 	}
 
 	for _, tt := range tests {

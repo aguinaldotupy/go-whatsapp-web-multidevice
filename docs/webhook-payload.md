@@ -1298,7 +1298,7 @@ Sent by WhatsApp Business / Cloud API senders (order confirmations, OTPs, bookin
 - `body` is the whole message as plain text: title, body and footer, then one line per button. Chat storage keeps the same text, and Chatwoot receives it with its usual WhatsApp-to-Markdown conversion. A template with no text gets `Template message`.
 - `buttons[].type` is `url`, `call`, `quick_reply` or `copy` (`code` holds the value to copy). Other native-flow buttons keep their name as the type.
 - A `single_select` button lists its options in `rows` (`id`, `title`, `description`).
-- `header_type` is set when the header is media: `image`, `video`, `document`, `location` or `product`. The header media itself is not included.
+- `header_type` is set when the header is media: `image`, `video`, `document`, `location` or `product`. For media headers (`document`, `image`, `video`), the file is extracted and included under the corresponding key (`payload.document`, `payload.image`, or `payload.video`), matching standard incoming media messages.
 - Templates wrapping an interactive message use the same shape, plus `subtitle`, and `cards` for carousels. Their `body` is rendered like an interactive message (`[quick_reply] Stop updates`, `Card 1: …`, and `Interactive message` when empty).
 - Interactive, list and order messages keep their `interactive` (the same text as `body`), `list` and `order` (raw WhatsApp message fields) keys, and get a plain-text `body` too: `List: <title>` or `Order: <title>` first, then the remaining text and list rows.
 

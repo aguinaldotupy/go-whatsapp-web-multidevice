@@ -15,7 +15,6 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatwoot"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/sirupsen/logrus"
-	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -790,27 +789,7 @@ func extractStructuredMessageContent(data map[string]any) string {
 		return "Order message"
 	}
 
-	if interactive, ok := data["interactive"].(string); ok && interactive != "" {
-		// Pre-rendered by buildOtherMessageTypes at construction time (not
-		// stored as the raw proto) so it survives the JSON round-trip on the
-		// Chatwoot forward retry path; see the comment at that call site.
-		return interactive
-	}
-
 	return ""
-}
-
-type nativeFlowButtonParams = utils.NativeFlowButtonParams
-
-// formatInteractiveMessageSummary renders an InteractiveMessage (business/
-// Cloud API messages with native buttons: cta_url, cta_call, single/multi
-// select, etc.) as plain text. Delegates to utils.FormatInteractiveMessageSummary.
-func formatInteractiveMessageSummary(im *waE2E.InteractiveMessage) string {
-	return utils.FormatInteractiveMessageSummary(im)
-}
-
-func formatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) string {
-	return utils.FormatNativeFlowButton(button)
 }
 
 func extractContactDetails(contact any) (name string, phone string, ok bool) {

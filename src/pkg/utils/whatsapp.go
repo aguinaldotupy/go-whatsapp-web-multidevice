@@ -96,13 +96,29 @@ func ExtractPhoneFromVCard(vcard string) string {
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToUpper(line), "TEL") {
-			if idx := strings.LastIndex(line, ":"); idx >= 0 {
-				return strings.TrimSpace(line[idx+1:])
-			}
+		if !isVCardTelProperty(line) {
+			continue
+		}
+		if idx := strings.LastIndex(line, ":"); idx >= 0 {
+			return strings.TrimSpace(line[idx+1:])
 		}
 	}
 	return ""
+}
+
+// isVCardTelProperty reports whether a vCard content line is a TEL property.
+// vCard allows any property name to carry a group prefix, and iOS exports every
+// phone that way ("item1.TEL;waid=...:+55 11 99999-0006"), so the group is
+// dropped before comparing the name.
+func isVCardTelProperty(line string) bool {
+	name := line
+	if idx := strings.IndexAny(name, ";:"); idx >= 0 {
+		name = name[:idx]
+	}
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	return strings.EqualFold(strings.TrimSpace(name), "TEL")
 }
 
 // FormatLocationSummary builds a one-liner for an incoming location or live-location pin.
@@ -184,6 +200,10 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 		return ""
 	}
 
+	// History sync passes raw messages, still inside the ephemeral/view-once
+	// wrappers that whatsmeow strips from live events.
+	msg = UnwrapMessage(msg)
+
 	// Check for regular text message
 	if text := msg.GetConversation(); text != "" {
 		return text
@@ -241,19 +261,10 @@ func ExtractMessageTextFromProto(msg *waE2E.Message) string {
 		return ptv.GetCaption()
 	}
 
-	// Check for buttons response message
-	if buttonsResponse := msg.GetButtonsResponseMessage(); buttonsResponse != nil {
-		return buttonsResponse.GetSelectedDisplayText()
-	}
-
-	// Check for list response message
-	if listResponse := msg.GetListResponseMessage(); listResponse != nil {
-		return listResponse.GetTitle()
-	}
-
-	// Check for template button reply
-	if templateButtonReply := msg.GetTemplateButtonReplyMessage(); templateButtonReply != nil {
-		return templateButtonReply.GetSelectedDisplayText()
+	// Check for business messages (template, interactive, buttons, list,
+	// product, order) and the button/list replies to them
+	if text := extractBusinessMessageText(msg); text != "" {
+		return text
 	}
 
 	// Check for shared contact card
@@ -566,70 +577,6 @@ func ExtractButtonsFromInteractive(im *waE2E.InteractiveMessage) []InteractiveBu
 	return buttons
 }
 
-// FormatInteractiveMessageSummary renders an InteractiveMessage as human-readable plain text.
-func FormatInteractiveMessageSummary(im *waE2E.InteractiveMessage) string {
-	if im == nil {
-		return ""
-	}
-	var parts []string
-
-	if header := im.GetHeader(); header != nil {
-		if title := header.GetTitle(); title != "" {
-			parts = append(parts, title)
-		}
-		if subtitle := header.GetSubtitle(); subtitle != "" {
-			parts = append(parts, subtitle)
-		}
-		if caption := interactiveHeaderMediaCaption(header); caption != "" {
-			parts = append(parts, caption)
-		}
-	}
-	if body := im.GetBody(); body != nil {
-		if text := body.GetText(); text != "" {
-			parts = append(parts, text)
-		}
-	}
-	if footer := im.GetFooter(); footer != nil {
-		if text := footer.GetText(); text != "" {
-			parts = append(parts, text)
-		}
-	}
-
-	for _, button := range im.GetNativeFlowMessage().GetButtons() {
-		if line := FormatNativeFlowButton(button); line != "" {
-			parts = append(parts, line)
-		}
-	}
-
-	if carousel := im.GetCarouselMessage(); carousel != nil {
-		for i, card := range carousel.GetCards() {
-			if cardSummary := FormatInteractiveMessageSummary(card); cardSummary != "" && cardSummary != "Interactive message" {
-				parts = append(parts, fmt.Sprintf("Card %d: %s", i+1, cardSummary))
-			}
-		}
-	}
-
-	if len(parts) == 0 {
-		return "Interactive message"
-	}
-	return strings.Join(parts, "\n")
-}
-
-func interactiveHeaderMediaCaption(header *waE2E.InteractiveMessage_Header) string {
-	if header == nil {
-		return ""
-	}
-	if img := header.GetImageMessage(); img != nil {
-		return img.GetCaption()
-	}
-	if vid := header.GetVideoMessage(); vid != nil {
-		return vid.GetCaption()
-	}
-	if doc := header.GetDocumentMessage(); doc != nil {
-		return doc.GetCaption()
-	}
-	return ""
-}
 
 // FormatNativeFlowButton renders a single NativeFlowButton to text.
 func FormatNativeFlowButton(button *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton) string {
@@ -748,7 +695,7 @@ func ExtractInteractiveResponseText(ir *waE2E.InteractiveResponseMessage) string
 		return title
 	}
 	if id != "" {
-		return id
+		return "Selected option " + id
 	}
 	if nf.GetName() != "" {
 		return nf.GetName()
@@ -1082,6 +1029,10 @@ func ExtractMediaInfo(msg *waE2E.Message) (mediaType string, filename string, me
 	if msg == nil {
 		return "", "", "", "", nil, nil, nil, 0
 	}
+
+	// Unwrap like ExtractMessageTextFromProto, so a wrapped captioned media
+	// message is never stored as caption-only text.
+	msg = UnwrapMessage(msg)
 
 	// Check for image message
 	if img := msg.GetImageMessage(); img != nil {
@@ -1935,6 +1886,10 @@ func BuildEventMessage(evt *events.Message) (message EvtMessage) {
 			}
 			return message
 		}
+	}
+
+	if message.Text == "" {
+		message.Text = extractBusinessMessageText(msg)
 	}
 
 	if ci := ExtractContextInfo(msg); ci != nil {

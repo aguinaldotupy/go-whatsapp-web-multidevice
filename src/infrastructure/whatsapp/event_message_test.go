@@ -793,10 +793,10 @@ func TestChatwootContentKeepsButtonResponseIDVerbatim(t *testing.T) {
 
 	_, payload, err := buildEventPayload(context.Background(), nil, evt)
 	assert.NoError(t, err)
-	assert.Equal(t, "opt_yes_1", payload["body"])
+	assert.Equal(t, "Selected option opt_yes_1", payload["body"])
 
 	content, _ := buildChatwootMessageContent(payload, false, "")
-	assert.Equal(t, "opt_yes_1", content)
+	assert.Equal(t, "Selected option opt_yes_1", content)
 }
 
 func TestBuildEventPayloadVideoNoteCaption(t *testing.T) {

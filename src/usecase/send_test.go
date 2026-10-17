@@ -406,7 +406,7 @@ func TestMergeReplyContextAddsQuoteFields(t *testing.T) {
 
 	deviceID := "6289605618749@s.whatsapp.net"
 	ctx := whatsapp.ContextWithDevice(context.Background(), whatsapp.NewDeviceInstance(deviceID, nil, nil))
-	got := service.mergeReplyContext(ctx, contextInfo, &replyID, types.JID{})
+	got := service.mergeReplyContext(ctx, contextInfo, &replyID, types.EmptyJID)
 
 	if got != contextInfo {
 		t.Fatal("expected existing context info to be reused")
@@ -481,7 +481,7 @@ func TestMergeReplyContextPreservesExistingContext(t *testing.T) {
 		MentionedJID:    []string{"628999999999@s.whatsapp.net"},
 	}
 
-	got := service.mergeReplyContext(context.Background(), contextInfo, &replyID, types.JID{})
+	got := service.mergeReplyContext(context.Background(), contextInfo, &replyID, types.EmptyJID)
 
 	if !got.GetIsForwarded() {
 		t.Fatal("expected forwarded flag to be preserved")
@@ -535,7 +535,7 @@ func TestMergeReplyContextLeavesExistingContextWhenReplyUnavailable(t *testing.T
 				err:     tt.err,
 			}}
 
-			got := service.mergeReplyContext(context.Background(), contextInfo, tt.replyID, types.JID{})
+			got := service.mergeReplyContext(context.Background(), contextInfo, tt.replyID, types.EmptyJID)
 
 			if got != contextInfo {
 				t.Fatal("expected existing context info to be reused")
@@ -626,7 +626,7 @@ func TestMergeReplyContextNormalizesALegacyDeviceSuffixedSender(t *testing.T) {
 
 	ctx := whatsapp.ContextWithDevice(context.Background(),
 		whatsapp.NewDeviceInstance("6289605618749@s.whatsapp.net", nil, nil))
-	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID, types.JID{})
+	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID, types.EmptyJID)
 
 	if got.GetParticipant() != "628123456789@s.whatsapp.net" {
 		t.Fatalf("expected the stored sender to be normalized, got %q", got.GetParticipant())
@@ -644,7 +644,7 @@ func TestMergeReplyContextPassesThroughAnUnparseableSender(t *testing.T) {
 
 	ctx := whatsapp.ContextWithDevice(context.Background(),
 		whatsapp.NewDeviceInstance("6289605618749@s.whatsapp.net", nil, nil))
-	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID, types.JID{})
+	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID, types.EmptyJID)
 
 	if got.GetParticipant() != "not-a-jid" {
 		t.Fatalf("expected the raw sender to survive, got %q", got.GetParticipant())

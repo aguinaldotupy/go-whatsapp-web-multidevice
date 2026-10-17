@@ -119,7 +119,7 @@ func TestUpdateAndQuotePreserveDeviceScopedContextMetadata(t *testing.T) {
 	replyID := "message-1"
 	contextInfo := &waE2E.ContextInfo{Expiration: proto.Uint32(3600)}
 	sender := serviceSend{chatStorageRepo: repo}
-	quoted := sender.mergeReplyContext(ctx, contextInfo, &replyID, types.JID{})
+	quoted := sender.mergeReplyContext(ctx, contextInfo, &replyID, types.EmptyJID)
 	require.Same(t, contextInfo, quoted)
 	assert.Equal(t, replyID, quoted.GetStanzaID())
 	assert.Equal(t, "device-a@s.whatsapp.net", quoted.GetParticipant())

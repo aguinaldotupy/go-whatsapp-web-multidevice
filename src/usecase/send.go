@@ -464,7 +464,6 @@ func setQuotedCaption(media *waE2E.Message, caption string) {
 	case media.GetDocumentMessage() != nil:
 		media.DocumentMessage.Caption = value
 	}
->>>>>>> 937af96 (feat(send): preserve media in quoted replies)
 }
 
 // withAllowReshare marks a status post as reshareable. Without

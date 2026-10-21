@@ -2492,8 +2492,8 @@ func (r *SQLiteRepository) storeEditedMessage(ctx context.Context, evt *events.M
 		Editor:            sender,
 		PreviousContent:   previousContent,
 		NewContent:        newContent,
-		EditedAt:          evt.Info.Timestamp,
-		CreatedAt:         now,
+		EditedAt:          evt.Info.Timestamp.UTC(),
+		CreatedAt:         now.UTC(),
 	}
 
 	tx, err := r.db.Begin()
@@ -2562,12 +2562,16 @@ func (r *SQLiteRepository) storeMessageEditExec(execer interface {
 		return fmt.Errorf("edit history requires original_message_id, edit_event_id, chat_jid, and device_id")
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	if edit.CreatedAt.IsZero() {
 		edit.CreatedAt = now
+	} else {
+		edit.CreatedAt = edit.CreatedAt.UTC()
 	}
 	if edit.EditedAt.IsZero() {
 		edit.EditedAt = edit.CreatedAt
+	} else {
+		edit.EditedAt = edit.EditedAt.UTC()
 	}
 
 	_, err := execer.Exec(`

@@ -125,14 +125,14 @@ func reduceQuotedVideo(video *waE2E.VideoMessage, viewOnce bool) *waE2E.VideoMes
 // hasViewOnceWrapper reports whether UnwrapMessage passes a view-once wrapper
 // on its way to the inner message of msg.
 func hasViewOnceWrapper(msg *waE2E.Message) bool {
-	for i := 0; i < 3 && msg != nil; i++ { // the bound UnwrapMessage uses
+	for i := 0; i < 8 && msg != nil; i++ { // the bound UnwrapMessage uses
 		switch {
 		case msg.GetViewOnceMessage().GetMessage() != nil,
 			msg.GetViewOnceMessageV2().GetMessage() != nil,
 			msg.GetViewOnceMessageV2Extension().GetMessage() != nil:
 			return true
 		}
-		msg = msg.GetEphemeralMessage().GetMessage()
+		msg = unwrapMessageOnce(msg)
 	}
 	return false
 }

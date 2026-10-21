@@ -99,8 +99,14 @@ func TestQuotedMediaCopyKeepsTheMediaMessageWithoutItsReplyContext(t *testing.T)
 		"sticker":        {qmSticker(qmReply), qmSticker(nil)},
 		"ephemeral":      {qmEphemeral(qmDocument(qmReply)), qmDocument(nil)},
 		"two ephemerals": {qmEphemeral(qmEphemeral(qmSticker(qmReply))), qmSticker(nil)},
-		// UnwrapMessage stops after three wrappers, and so does the copy.
-		"past the wrapper limit": {qmEphemeral(qmEphemeral(qmEphemeral(qmEphemeral(qmImage(nil))))), nil},
+		// UnwrapMessage stops after eight wrappers, and so does the copy.
+		"past the wrapper limit": {func() *waE2E.Message {
+			m := qmImage(nil)
+			for i := 0; i < 9; i++ {
+				m = qmEphemeral(m)
+			}
+			return m
+		}(), nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			requireQuotedMediaCopy(t, tc.in, false, tc.want)

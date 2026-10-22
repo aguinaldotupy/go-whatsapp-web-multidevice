@@ -146,6 +146,17 @@ func initEnvConfig() {
 		config.AppUIAssetSHA256 = envUIPin
 	}
 
+	// Sentry settings
+	if envSentryDSN := viper.GetString("sentry_dsn"); envSentryDSN != "" {
+		config.SentryDSN = envSentryDSN
+	}
+	if envSentryEnv := viper.GetString("sentry_environment"); envSentryEnv != "" {
+		config.SentryEnvironment = envSentryEnv
+	}
+	if viper.IsSet("sentry_traces_sample_rate") {
+		config.SentryTracesSampleRate = viper.GetFloat64("sentry_traces_sample_rate")
+	}
+
 	// Database settings
 	if envDBURI := viper.GetString("db_uri"); envDBURI != "" {
 		config.DBURI = envDBURI
@@ -362,6 +373,26 @@ func initFlags() {
 		"cors-allowed-origins", "",
 		config.AppCORSAllowedOrigins,
 		`allowed CORS origins, any origin when empty --cors-allowed-origins <string> | example: --cors-allowed-origins="https://ui.example.com,https://ops.example.com"`,
+	)
+
+	// Sentry flags
+	rootCmd.PersistentFlags().StringVar(
+		&config.SentryDSN,
+		"sentry-dsn",
+		config.SentryDSN,
+		"Sentry DSN for error reporting | example: --sentry-dsn=https://...",
+	)
+	rootCmd.PersistentFlags().StringVar(
+		&config.SentryEnvironment,
+		"sentry-environment",
+		config.SentryEnvironment,
+		"Sentry environment | example: --sentry-environment=production",
+	)
+	rootCmd.PersistentFlags().Float64Var(
+		&config.SentryTracesSampleRate,
+		"sentry-traces-sample-rate",
+		config.SentryTracesSampleRate,
+		"Sentry traces sample rate (0.0 to 1.0)",
 	)
 
 	// Web UI flags

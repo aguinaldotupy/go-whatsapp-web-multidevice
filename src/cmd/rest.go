@@ -16,12 +16,14 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatwoot"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/uiasset"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+	pkgSentry "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/sentry"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	uimcp "github.com/aldinokemal/go-whatsapp-web-multidevice/ui/mcp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/websocket"
+	sentryfiber "github.com/getsentry/sentry-go/fiberv3"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/basicauth"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -65,6 +67,13 @@ func restServer(_ *cobra.Command, _ []string) {
 	app.Use(config.AppBasePath+"/statics", static.New("./statics"))
 
 	app.Use(middleware.Recovery())
+	if config.SentryDSN != "" {
+		_ = pkgSentry.InitSentry(config.SentryDSN, config.SentryEnvironment, config.AppVersion, config.SentryTracesSampleRate)
+		defer pkgSentry.Flush(2 * time.Second)
+		app.Use(sentryfiber.New(sentryfiber.Options{
+			Repanic: true,
+		}))
+	}
 	app.Use(middleware.RequestTimeout(middleware.DefaultRequestTimeout))
 	if config.AppDebug {
 		app.Use(logger.New())

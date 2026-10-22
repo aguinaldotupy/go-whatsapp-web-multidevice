@@ -33,6 +33,11 @@ var (
 	// the REST server. Streamable HTTP transport; inherits basic auth.
 	McpEnabled = true
 
+	// Sentry error monitoring and performance tracing. Disabled when SentryDSN is empty.
+	SentryDSN              = ""
+	SentryEnvironment      = "production"
+	SentryTracesSampleRate = 1.0
+
 	PathQrCode    = "statics/qrcode"
 	PathSendItems = "statics/senditems"
 	PathMedia     = "statics/media"

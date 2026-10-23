@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
+        with: { fetch-depth: 0 }
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -34,7 +34,7 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build -o whatsapp .
+          go build -ldflags "-X github.com/aldinokemal/go-whatsapp-web-multidevice/config.SentryRelease=${{ github.sha }}" -o whatsapp .
           file whatsapp
 
       - name: Connect to Tailscale
@@ -118,3 +118,16 @@ jobs:
             echo "::error::Smoke test returned $status (expected 200) — service may be broken, check journalctl -u gowa on the LXC"
             exit 1
           fi
+
+      - name: Create Sentry Release & Notify Deploy
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG || 'gowa' }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT || 'gowa' }}
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        uses: getsentry/action-release@v3
+        with:
+          environment: production
+          version: ${{ github.sha }}
+          ignore_missing: true
+          ignore_empty: true

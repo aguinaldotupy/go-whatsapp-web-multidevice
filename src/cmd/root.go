@@ -153,6 +153,9 @@ func initEnvConfig() {
 	if envSentryEnv := viper.GetString("sentry_environment"); envSentryEnv != "" {
 		config.SentryEnvironment = envSentryEnv
 	}
+	if envSentryRelease := viper.GetString("sentry_release"); envSentryRelease != "" {
+		config.SentryRelease = envSentryRelease
+	}
 	if viper.IsSet("sentry_traces_sample_rate") {
 		config.SentryTracesSampleRate = viper.GetFloat64("sentry_traces_sample_rate")
 	}
@@ -387,6 +390,12 @@ func initFlags() {
 		"sentry-environment",
 		config.SentryEnvironment,
 		"Sentry environment | example: --sentry-environment=production",
+	)
+	rootCmd.PersistentFlags().StringVar(
+		&config.SentryRelease,
+		"sentry-release",
+		config.SentryRelease,
+		"Sentry release version | example: --sentry-release=v9.6.0",
 	)
 	rootCmd.PersistentFlags().Float64Var(
 		&config.SentryTracesSampleRate,

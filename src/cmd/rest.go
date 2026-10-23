@@ -68,7 +68,7 @@ func restServer(_ *cobra.Command, _ []string) {
 
 	app.Use(middleware.Recovery())
 	if config.SentryDSN != "" {
-		_ = pkgSentry.InitSentry(config.SentryDSN, config.SentryEnvironment, config.AppVersion, config.SentryTracesSampleRate)
+		_ = pkgSentry.InitSentry(config.SentryDSN, config.SentryEnvironment, resolveSentryRelease(), config.SentryTracesSampleRate)
 		defer pkgSentry.Flush(2 * time.Second)
 		app.Use(sentryfiber.New(sentryfiber.Options{
 			Repanic: true,
@@ -326,6 +326,13 @@ func newCORSMiddleware() fiber.Handler {
 			return oauthAuthorizePath != "" && c.Path() == oauthAuthorizePath
 		},
 	})
+}
+
+func resolveSentryRelease() string {
+	if config.SentryRelease != "" {
+		return config.SentryRelease
+	}
+	return config.AppVersion
 }
 
 func newBasicAuthMiddleware(accounts map[string]string) fiber.Handler {

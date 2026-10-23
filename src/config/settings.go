@@ -36,6 +36,7 @@ var (
 	// Sentry error monitoring and performance tracing. Disabled when SentryDSN is empty.
 	SentryDSN              = ""
 	SentryEnvironment      = "production"
+	SentryRelease          = ""
 	SentryTracesSampleRate = 1.0
 
 	PathQrCode    = "statics/qrcode"

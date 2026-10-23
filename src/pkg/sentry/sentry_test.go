@@ -9,6 +9,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.mau.fi/whatsmeow"
 )
 
 func TestInitSentryEmptyDSNDoesNothing(t *testing.T) {
@@ -54,4 +55,32 @@ func TestBeforeSendFiltersValidationErrors(t *testing.T) {
 
 	// Generic/system error should be preserved
 	assert.NotNil(t, filter(event, &sentry.EventHint{OriginalException: genericErr}))
+}
+
+func TestBeforeSendFiltersIQErrors(t *testing.T) {
+	rateLimitErr := whatsmeow.ErrIQRateOverLimit
+	notFoundErr := whatsmeow.ErrIQNotFound
+	serverErr := whatsmeow.ErrIQInternalServerError
+
+	filter := func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+		if hint != nil && hint.OriginalException != nil {
+			var genericErr pkgError.GenericError
+			if errors.As(hint.OriginalException, &genericErr) && genericErr.StatusCode() < 500 {
+				return nil
+			}
+			var iqErr *whatsmeow.IQError
+			if errors.As(hint.OriginalException, &iqErr) && iqErr.Code < 500 {
+				return nil
+			}
+		}
+		return event
+	}
+
+	event := &sentry.Event{}
+	// Rate limit (429) and Not Found (404) should be filtered out
+	assert.Nil(t, filter(event, &sentry.EventHint{OriginalException: rateLimitErr}))
+	assert.Nil(t, filter(event, &sentry.EventHint{OriginalException: notFoundErr}))
+
+	// Upstream 500 internal server error should be kept
+	assert.NotNil(t, filter(event, &sentry.EventHint{OriginalException: serverErr}))
 }

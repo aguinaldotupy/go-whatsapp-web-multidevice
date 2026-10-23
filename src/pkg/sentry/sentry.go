@@ -7,6 +7,7 @@ import (
 	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
 	"github.com/getsentry/sentry-go"
 	"github.com/sirupsen/logrus"
+	"go.mau.fi/whatsmeow"
 )
 
 // InitSentry initializes Sentry SDK and attaches a logrus hook if DSN is set.
@@ -24,9 +25,13 @@ func InitSentry(dsn, environment, release string, sampleRate float64) error {
 		SendDefaultPII:   false,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			if hint != nil && hint.OriginalException != nil {
-				// Don't report client validation errors (HTTP 400) to Sentry
+				// Don't report client validation/rate-limit errors (4xx) to Sentry
 				var genericErr pkgError.GenericError
-				if errors.As(hint.OriginalException, &genericErr) {
+				if errors.As(hint.OriginalException, &genericErr) && genericErr.StatusCode() < 500 {
+					return nil
+				}
+				var iqErr *whatsmeow.IQError
+				if errors.As(hint.OriginalException, &iqErr) && iqErr.Code < 500 {
 					return nil
 				}
 			}
@@ -76,7 +81,11 @@ func (h *sentryLogrusHook) Fire(entry *logrus.Entry) error {
 
 		if errVal, ok := entry.Data[logrus.ErrorKey].(error); ok && errVal != nil {
 			var genericErr pkgError.GenericError
-			if errors.As(errVal, &genericErr) {
+			if errors.As(errVal, &genericErr) && genericErr.StatusCode() < 500 {
+				return
+			}
+			var iqErr *whatsmeow.IQError
+			if errors.As(errVal, &iqErr) && iqErr.Code < 500 {
 				return
 			}
 			hub.CaptureException(errVal)

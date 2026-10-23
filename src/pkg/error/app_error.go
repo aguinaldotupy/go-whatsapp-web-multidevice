@@ -67,19 +67,19 @@ func (err sessionSavedError) StatusCode() int {
 	return http.StatusInternalServerError
 }
 
-type notFoundError string
+type NotFoundError string
 
-func (err notFoundError) Error() string {
+func (err NotFoundError) Error() string {
 	return string(err)
 }
 
 // ErrCode will return the error code based on the error data type
-func (err notFoundError) ErrCode() string {
+func (err NotFoundError) ErrCode() string {
 	return "NOT_FOUND"
 }
 
 // StatusCode will return the HTTP status code based on the error data type
-func (err notFoundError) StatusCode() int {
+func (err NotFoundError) StatusCode() int {
 	return http.StatusNotFound
 }
 
@@ -90,6 +90,6 @@ var (
 	ErrReconnect             = AuthError("reconnect error")
 	ErrQrChannel             = qrChannelError("QR channel error")
 	ErrSessionSaved          = sessionSavedError("your session have been saved, please wait to connect 2 second and refresh again")
-	ErrDeviceNotFound        = notFoundError("device not found")
-	ErrScheduledSendNotFound = notFoundError("scheduled send not found")
+	ErrDeviceNotFound        = NotFoundError("device not found")
+	ErrScheduledSendNotFound = NotFoundError("scheduled send not found")
 )

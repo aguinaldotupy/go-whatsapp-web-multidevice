@@ -11,6 +11,8 @@ import (
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+	pkgError "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/error"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -333,7 +335,7 @@ func newMessageActionTestService(t *testing.T, remoteErr error) (serviceMessage,
 	}
 
 	deviceJID := types.NewJID("device-a", types.DefaultUserServer)
-	client := &whatsmeow.Client{Store: &waStore.Device{ID: &deviceJID}}
+	client := whatsmeow.NewClient(&waStore.Device{ID: &deviceJID}, nil)
 	instance := whatsapp.NewDeviceInstance("device-a", client, repo)
 	ctx := whatsapp.ContextWithDevice(context.Background(), instance)
 	recipient := types.NewJID("628123456789", types.DefaultUserServer)
@@ -351,4 +353,74 @@ func newMessageActionTestService(t *testing.T, remoteErr error) (serviceMessage,
 		},
 	}
 	return service, repo, ctx
+}
+
+func TestDownloadMedia_Validations(t *testing.T) {
+	service, repo, ctx := newMessageActionTestService(t, nil)
+	senderJID := "5511989770388@s.whatsapp.net"
+	chatJID := "5511988920869@s.whatsapp.net"
+	otherJID := "5511999999999@s.whatsapp.net"
+
+	require.NoError(t, repo.StoreMessage(&domainChatStorage.Message{
+		ID:         "media-msg-1",
+		ChatJID:    chatJID,
+		DeviceID:   senderJID,
+		Sender:     senderJID,
+		MediaType:  "audio",
+		DirectPath: "/v/t62/media.enc",
+		IsFromMe:   true,
+	}))
+
+	require.NoError(t, repo.StoreMessage(&domainChatStorage.Message{
+		ID:        "text-msg-1",
+		ChatJID:   chatJID,
+		DeviceID:  senderJID,
+		Sender:    senderJID,
+		Content:   "just text",
+		IsFromMe:  true,
+	}))
+
+	// 1. Message not found -> NotFoundError
+	_, err := service.DownloadMedia(ctx, domainMessage.DownloadMediaRequest{
+		Phone:     chatJID,
+		MessageID: "non-existent-id",
+	})
+	require.Error(t, err)
+	var notFoundErr pkgError.NotFoundError
+	assert.ErrorAs(t, err, &notFoundErr)
+
+	// 2. Message has no media -> ValidationError
+	_, err = service.DownloadMedia(ctx, domainMessage.DownloadMediaRequest{
+		Phone:     chatJID,
+		MessageID: "text-msg-1",
+	})
+	require.Error(t, err)
+	var valErr pkgError.ValidationError
+	assert.ErrorAs(t, err, &valErr)
+	assert.Contains(t, err.Error(), "does not contain downloadable media")
+
+	// 3. Message does not belong to chat -> ValidationError
+	service.validateJIDFn = func(_ *whatsmeow.Client, p string) (types.JID, error) {
+		parsed, err := utils.ParseJID(p)
+		return parsed, err
+	}
+	_, err = service.DownloadMedia(ctx, domainMessage.DownloadMediaRequest{
+		Phone:     otherJID,
+		MessageID: "media-msg-1",
+	})
+	require.Error(t, err)
+	assert.ErrorAs(t, err, &valErr)
+	assert.Contains(t, err.Error(), "does not belong to chat")
+
+	// 4. Outgoing message requested with device's own number (sender) matches
+	// (it fails later at whatsapp download, but passes validation without "does not belong to chat")
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = service.DownloadMedia(canceledCtx, domainMessage.DownloadMediaRequest{
+		Phone:     senderJID,
+		MessageID: "media-msg-1",
+	})
+	if err != nil {
+		assert.NotContains(t, err.Error(), "does not belong to chat")
+	}
 }

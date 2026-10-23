@@ -261,7 +261,7 @@ func (service serviceMessage) ReactMessage(ctx context.Context, request domainMe
 		return response, pkgError.ErrWaCLI
 	}
 
-	dataWaRecipient, err := utils.ValidateJidWithLogin(client, request.Phone)
+	dataWaRecipient, err := service.validateJID(client, request.Phone)
 	if err != nil {
 		return response, err
 	}
@@ -581,7 +581,7 @@ func (service serviceMessage) StarMessage(ctx context.Context, request domainMes
 		return pkgError.ErrWaCLI
 	}
 
-	dataWaRecipient, err := utils.ValidateJidWithLogin(client, request.Phone)
+	dataWaRecipient, err := service.validateJID(client, request.Phone)
 	if err != nil {
 		return err
 	}
@@ -610,7 +610,7 @@ func (service serviceMessage) DownloadMedia(ctx context.Context, request domainM
 		return response, pkgError.ErrWaCLI
 	}
 
-	dataWaRecipient, err := utils.ValidateJidWithLogin(client, request.Phone)
+	dataWaRecipient, err := service.validateJID(client, request.Phone)
 	if err != nil {
 		return response, err
 	}
@@ -622,19 +622,19 @@ func (service serviceMessage) DownloadMedia(ctx context.Context, request domainM
 	}
 
 	if message == nil {
-		return response, fmt.Errorf("message with ID %s not found", request.MessageID)
+		return response, pkgError.NotFoundError(fmt.Sprintf("message with ID %s not found", request.MessageID))
 	}
 
 	directPath := utils.ResolveMediaDirectPath(message.DirectPath, message.URL)
 
 	// Check if message has media
 	if message.MediaType == "" || directPath == "" {
-		return response, fmt.Errorf("message %s does not contain downloadable media", request.MessageID)
+		return response, pkgError.ValidationError(fmt.Sprintf("message %s does not contain downloadable media", request.MessageID))
 	}
 
-	// Verify the message is from the specified chat
-	if message.ChatJID != dataWaRecipient.String() {
-		return response, fmt.Errorf("message %s does not belong to chat %s", request.MessageID, dataWaRecipient.String())
+	// Verify the message is from the specified chat or sent by me to that chat
+	if message.ChatJID != dataWaRecipient.String() && (!message.IsFromMe || message.Sender != dataWaRecipient.String()) {
+		return response, pkgError.ValidationError(fmt.Sprintf("message %s does not belong to chat %s", request.MessageID, dataWaRecipient.String()))
 	}
 
 	// Create directory structure for organized storage

@@ -84,3 +84,45 @@ func TestBeforeSendFiltersIQErrors(t *testing.T) {
 	// Upstream 500 internal server error should be kept
 	assert.NotNil(t, filter(event, &sentry.EventHint{OriginalException: serverErr}))
 }
+
+func TestExtractException(t *testing.T) {
+	validationErr := pkgError.ValidationError("limit: must be no greater than 100.")
+	systemErr := errors.New("database failure")
+
+	// Nil hint
+	assert.Nil(t, extractException(nil))
+
+	// OriginalException
+	assert.Equal(t, validationErr, extractException(&sentry.EventHint{OriginalException: validationErr}))
+
+	// RecoveredException (as error)
+	assert.Equal(t, validationErr, extractException(&sentry.EventHint{RecoveredException: validationErr}))
+
+	// RecoveredException (as non-error string)
+	assert.Nil(t, extractException(&sentry.EventHint{RecoveredException: "some string"}))
+
+	// Prefer OriginalException if both are set
+	assert.Equal(t, systemErr, extractException(&sentry.EventHint{OriginalException: systemErr, RecoveredException: validationErr}))
+}
+
+func TestBeforeSendFiltersRecoveredValidationErrors(t *testing.T) {
+	validationErr := pkgError.ValidationError("limit: must be no greater than 100.")
+	systemErr := errors.New("database failure")
+
+	filter := func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+		if ex := extractException(hint); ex != nil {
+			var genericErr pkgError.GenericError
+			if errors.As(ex, &genericErr) && genericErr.StatusCode() < 500 {
+				return nil
+			}
+		}
+		return event
+	}
+
+	event := &sentry.Event{}
+	// Recovered validation error (e.g. from sentryfiber recovering a panic) should be dropped
+	assert.Nil(t, filter(event, &sentry.EventHint{RecoveredException: validationErr}))
+
+	// Recovered unexpected crash should be kept
+	assert.NotNil(t, filter(event, &sentry.EventHint{RecoveredException: systemErr}))
+}

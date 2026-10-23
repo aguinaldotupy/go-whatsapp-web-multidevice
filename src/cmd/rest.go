@@ -66,7 +66,6 @@ func restServer(_ *cobra.Command, _ []string) {
 
 	app.Use(config.AppBasePath+"/statics", static.New("./statics"))
 
-	app.Use(middleware.Recovery())
 	if config.SentryDSN != "" {
 		_ = pkgSentry.InitSentry(config.SentryDSN, config.SentryEnvironment, resolveSentryRelease(), config.SentryTracesSampleRate)
 		defer pkgSentry.Flush(2 * time.Second)
@@ -74,6 +73,7 @@ func restServer(_ *cobra.Command, _ []string) {
 			Repanic: true,
 		}))
 	}
+	app.Use(middleware.Recovery())
 	app.Use(middleware.RequestTimeout(middleware.DefaultRequestTimeout))
 	if config.AppDebug {
 		app.Use(logger.New())

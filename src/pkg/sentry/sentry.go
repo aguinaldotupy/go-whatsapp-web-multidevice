@@ -10,6 +10,19 @@ import (
 	"go.mau.fi/whatsmeow"
 )
 
+func extractException(hint *sentry.EventHint) error {
+	if hint == nil {
+		return nil
+	}
+	if hint.OriginalException != nil {
+		return hint.OriginalException
+	}
+	if err, ok := hint.RecoveredException.(error); ok {
+		return err
+	}
+	return nil
+}
+
 // InitSentry initializes Sentry SDK and attaches a logrus hook if DSN is set.
 func InitSentry(dsn, environment, release string, sampleRate float64) error {
 	if dsn == "" {
@@ -24,14 +37,14 @@ func InitSentry(dsn, environment, release string, sampleRate float64) error {
 		TracesSampleRate: sampleRate,
 		SendDefaultPII:   false,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			if hint != nil && hint.OriginalException != nil {
+			if ex := extractException(hint); ex != nil {
 				// Don't report client validation/rate-limit errors (4xx) to Sentry
 				var genericErr pkgError.GenericError
-				if errors.As(hint.OriginalException, &genericErr) && genericErr.StatusCode() < 500 {
+				if errors.As(ex, &genericErr) && genericErr.StatusCode() < 500 {
 					return nil
 				}
 				var iqErr *whatsmeow.IQError
-				if errors.As(hint.OriginalException, &iqErr) && iqErr.Code < 500 {
+				if errors.As(ex, &iqErr) && iqErr.Code < 500 {
 					return nil
 				}
 			}

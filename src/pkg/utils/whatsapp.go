@@ -164,6 +164,21 @@ func KnownDocumentMIMEByExtension(ext string) (string, bool) {
 	return resolveKnownDocumentMIME(ext)
 }
 
+var preferredMIMEExtensions = map[string]string{
+	"image/jpeg": ".jpg",
+	"image/png":  ".png",
+	"image/webp": ".webp",
+	"image/gif":  ".gif",
+	"video/mp4":  ".mp4",
+	"video/3gpp": ".3gp",
+	"video/webm": ".webm",
+	"audio/ogg":  ".ogg",
+	"audio/opus": ".ogg",
+	"audio/mpeg": ".mp3",
+	"audio/mp4":  ".m4a",
+	"audio/wav":  ".wav",
+}
+
 func determineMediaExtension(originalFilename, mimeType string) string {
 	if originalFilename != "" {
 		if ext := filepath.Ext(originalFilename); ext != "" {
@@ -171,22 +186,38 @@ func determineMediaExtension(originalFilename, mimeType string) string {
 		}
 	}
 
-	if idx := strings.Index(mimeType, ";"); idx >= 0 {
-		mimeType = strings.TrimSpace(mimeType[:idx])
+	cleanMime := strings.TrimSpace(mimeType)
+	var hasOpus bool
+	if idx := strings.Index(cleanMime, ";"); idx >= 0 {
+		params := strings.ToLower(cleanMime[idx+1:])
+		if strings.Contains(params, "codecs=opus") {
+			hasOpus = true
+		}
+		cleanMime = strings.TrimSpace(cleanMime[:idx])
+	}
+	cleanMime = strings.ToLower(cleanMime)
+
+	if cleanMime == "" {
+		return ""
 	}
 
-	if ext, ok := resolveKnownDocumentExtension(mimeType); ok {
+	if hasOpus || cleanMime == "audio/opus" {
+		return ".ogg"
+	}
+
+	if ext, ok := preferredMIMEExtensions[cleanMime]; ok {
 		return ext
 	}
 
-	if ext, err := mime.ExtensionsByType(mimeType); err == nil && len(ext) > 0 {
+	if ext, ok := resolveKnownDocumentExtension(cleanMime); ok {
+		return ext
+	}
+
+	if ext, err := mime.ExtensionsByType(cleanMime); err == nil && len(ext) > 0 {
 		return ext[0]
 	}
 
-	if parts := strings.Split(mimeType, "/"); len(parts) > 1 {
-		return "." + parts[len(parts)-1]
-	}
-
+	// Unknown mimetype: fall back to no extension, never guess by category or subtype string
 	return ""
 }
 
@@ -1230,27 +1261,75 @@ func newForwardContextInfo(duration *int) *waE2E.ContextInfo {
 // defaultForwardMimeType returns a mime type for stored media whose original
 // mime type was not persisted.
 func defaultForwardMimeType(message *domainChatStorage.Message) string {
-	return defaultStoredMediaMimeType(message.MediaType, message.Filename)
-}
-
-// defaultStoredMediaMimeType returns a mime type for stored media whose
-// original mime type was not persisted. WhatsApp transcodes media to fixed
-// formats, so per-type defaults are accurate except for documents, which are
-// derived from the stored filename.
-func defaultStoredMediaMimeType(mediaType, filename string) string {
-	switch mediaType {
+	if mimeType := defaultStoredMediaMimeType(message.MediaType, message.Filename); mimeType != "" {
+		return mimeType
+	}
+	// Fallback defaults for WhatsApp forward proto requirements when original mime/ext is unknown
+	switch message.MediaType {
 	case "image":
 		return "image/jpeg"
 	case "video", "video_note":
 		return "video/mp4"
+	case "audio", "ptt":
+		return "audio/ogg; codecs=opus"
+	case "sticker":
+		return "image/webp"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// defaultStoredMediaMimeType returns a mime type derived from the media type
+// and stored filename extension. It avoids category-level guesses (e.g. assuming
+// all audio is MP3) and returns empty when the format cannot be determined.
+func defaultStoredMediaMimeType(mediaType, filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	switch mediaType {
 	case "ptt":
 		return "audio/ogg; codecs=opus"
 	case "audio":
-		return "audio/mpeg"
+		switch ext {
+		case ".ogg", ".opus":
+			return "audio/ogg; codecs=opus"
+		case ".mp3":
+			return "audio/mpeg"
+		case ".m4a", ".aac":
+			return "audio/mp4"
+		case ".wav":
+			return "audio/wav"
+		default:
+			return ""
+		}
+	case "image":
+		switch ext {
+		case ".jpg", ".jpeg":
+			return "image/jpeg"
+		case ".png":
+			return "image/png"
+		case ".webp":
+			return "image/webp"
+		case ".gif":
+			return "image/gif"
+		default:
+			return ""
+		}
+	case "video", "video_note":
+		switch ext {
+		case ".mp4":
+			return "video/mp4"
+		case ".3gp":
+			return "video/3gpp"
+		case ".webm":
+			return "video/webm"
+		case ".mov":
+			return "video/quicktime"
+		default:
+			return ""
+		}
 	case "sticker":
 		return "image/webp"
 	case "document":
-		ext := strings.ToLower(filepath.Ext(filename))
 		if mimeType, ok := knownDocumentMIMEByExtension[ext]; ok {
 			return mimeType
 		}
@@ -1421,9 +1500,10 @@ func BuildForwardMessageFromStorage(message *domainChatStorage.Message, opts For
 // from stored chat media metadata.
 func BuildDownloadableMessage(mediaType, mediaURL, directPath, filename string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) (whatsmeow.DownloadableMessage, error) {
 	resolvedDirectPath := ResolveMediaDirectPath(directPath, mediaURL)
-	// The mime type is not persisted in chat storage. Without it, ExtractMedia
-	// cannot derive a file extension for anything but documents.
-	mimeType := proto.String(defaultStoredMediaMimeType(mediaType, filename))
+	var mimeType *string
+	if mime := defaultStoredMediaMimeType(mediaType, filename); mime != "" {
+		mimeType = proto.String(mime)
+	}
 
 	switch mediaType {
 	case "image":

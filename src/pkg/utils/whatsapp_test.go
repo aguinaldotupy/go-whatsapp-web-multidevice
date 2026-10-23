@@ -43,10 +43,40 @@ func TestDetermineMediaExtension(t *testing.T) {
 			wantSuffix: ".zip",
 		},
 		{
-			name:       "AudioOgaWithCodecsParam",
+			name:       "AudioOggWithCodecsParam",
 			filename:   "",
 			mimeType:   "audio/ogg; codecs=opus",
-			wantSuffix: ".oga",
+			wantSuffix: ".ogg",
+		},
+		{
+			name:       "AudioOggPlain",
+			filename:   "",
+			mimeType:   "audio/ogg",
+			wantSuffix: ".ogg",
+		},
+		{
+			name:       "AudioOpusPlain",
+			filename:   "",
+			mimeType:   "audio/opus",
+			wantSuffix: ".ogg",
+		},
+		{
+			name:       "AudioMpegMp3",
+			filename:   "",
+			mimeType:   "audio/mpeg",
+			wantSuffix: ".mp3",
+		},
+		{
+			name:       "UnknownMimeFallbackEmpty",
+			filename:   "",
+			mimeType:   "unknown/nonexistent-format",
+			wantSuffix: "",
+		},
+		{
+			name:       "EmptyMimeFallbackEmpty",
+			filename:   "",
+			mimeType:   "",
+			wantSuffix: "",
 		},
 		{
 			name:       "ExeFromFilename",
@@ -429,14 +459,18 @@ func TestBuildDownloadableMessageSetsMimetype(t *testing.T) {
 		mediaType string
 		filename  string
 		wantMime  string
+		wantExt   string
 	}{
-		{name: "Image", mediaType: "image", filename: "image_20260101_120000_caption.jpg", wantMime: "image/jpeg"},
-		{name: "Video", mediaType: "video", filename: "video_20260101_120000.mp4", wantMime: "video/mp4"},
-		{name: "VideoNote", mediaType: "video_note", filename: "video_note_20260101_120000.mp4", wantMime: "video/mp4"},
-		{name: "Audio", mediaType: "audio", filename: "audio_20260101_120000.ogg", wantMime: "audio/mpeg"},
-		{name: "PTT", mediaType: "ptt", filename: "audio_20260101_120000.ogg", wantMime: "audio/ogg; codecs=opus"},
-		{name: "Sticker", mediaType: "sticker", filename: "", wantMime: "image/webp"},
-		{name: "Document", mediaType: "document", filename: "report.pdf", wantMime: "application/pdf"},
+		{name: "Image", mediaType: "image", filename: "image_20260101_120000_caption.jpg", wantMime: "image/jpeg", wantExt: ".jpg"},
+		{name: "ImagePng", mediaType: "image", filename: "image_20260101_120000.png", wantMime: "image/png", wantExt: ".png"},
+		{name: "Video", mediaType: "video", filename: "video_20260101_120000.mp4", wantMime: "video/mp4", wantExt: ".mp4"},
+		{name: "VideoNote", mediaType: "video_note", filename: "video_note_20260101_120000.mp4", wantMime: "video/mp4", wantExt: ".mp4"},
+		{name: "AudioVoiceNoteOgg", mediaType: "audio", filename: "audio_20260101_120000.ogg", wantMime: "audio/ogg; codecs=opus", wantExt: ".ogg"},
+		{name: "AudioMp3", mediaType: "audio", filename: "audio_20260101_120000.mp3", wantMime: "audio/mpeg", wantExt: ".mp3"},
+		{name: "PTT", mediaType: "ptt", filename: "audio_20260101_120000.ogg", wantMime: "audio/ogg; codecs=opus", wantExt: ".ogg"},
+		{name: "Sticker", mediaType: "sticker", filename: "", wantMime: "image/webp", wantExt: ".webp"},
+		{name: "Document", mediaType: "document", filename: "report.pdf", wantMime: "application/pdf", wantExt: ".pdf"},
+		{name: "AudioUnknownExtFallbackEmpty", mediaType: "audio", filename: "raw_audio_no_ext", wantMime: "", wantExt: ""},
 	}
 
 	for _, tt := range tests {
@@ -452,15 +486,13 @@ func TestBuildDownloadableMessageSetsMimetype(t *testing.T) {
 			if withMime.GetMimetype() != tt.wantMime {
 				t.Fatalf("mimetype = %q, want %q", withMime.GetMimetype(), tt.wantMime)
 			}
-			// ExtractMedia names the file from the original filename (documents
-			// only) and this mime type; an empty mime type left the file without
-			// an extension.
 			originalFilename := ""
 			if tt.mediaType == "document" {
 				originalFilename = tt.filename
 			}
-			if ext := determineMediaExtension(originalFilename, withMime.GetMimetype()); ext == "" {
-				t.Fatalf("determineMediaExtension() = %q, want a file extension", ext)
+			ext := determineMediaExtension(originalFilename, withMime.GetMimetype())
+			if ext != tt.wantExt {
+				t.Fatalf("determineMediaExtension() = %q, want %q", ext, tt.wantExt)
 			}
 		})
 	}

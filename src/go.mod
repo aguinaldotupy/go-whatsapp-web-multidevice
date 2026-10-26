@@ -7,6 +7,8 @@ require (
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/dustin/go-humanize v1.0.1
+	github.com/getsentry/sentry-go v0.50.0
+	github.com/getsentry/sentry-go/fiberv3 v0.50.0
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
 	github.com/gofiber/contrib/v3/websocket v1.2.1
 	github.com/gofiber/fiber/v3 v3.6.1
@@ -23,7 +25,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/valyala/fasthttp v1.76.0
 	go.mau.fi/libsignal v0.2.2
-	go.mau.fi/whatsmeow v0.0.0-20261017175727-b2b1e71d45e2
+	go.mau.fi/whatsmeow v0.0.0-20261026164206-4b4986ff80bc
 	golang.org/x/image v0.44.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.53.0
@@ -38,8 +40,6 @@ require (
 	github.com/elliotchance/orderedmap/v3 v3.1.1 // indirect
 	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/getsentry/sentry-go v0.50.0 // indirect
-	github.com/getsentry/sentry-go/fiberv3 v0.50.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gofiber/schema v1.9.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect

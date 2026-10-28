@@ -1367,14 +1367,14 @@ func (r *SQLiteRepository) DeleteChatwootMessageLinksByConfig(configID int64) er
 	return err
 }
 
-const chatwootDeviceConfigColumns = `id, device_id, device_jid, chatwoot_url, account_id, inbox_id, api_token, enabled, created_at, updated_at`
+const chatwootDeviceConfigColumns = `id, device_id, device_jid, chatwoot_url, account_id, inbox_id, api_token, enabled, created_at, updated_at, webhook_secret`
 
 func (r *SQLiteRepository) scanChatwootDeviceConfig(scanner interface{ Scan(...any) error }) (*domainChatStorage.ChatwootDeviceConfig, error) {
 	cfg := &domainChatStorage.ChatwootDeviceConfig{}
 	err := scanner.Scan(
 		&cfg.ID, &cfg.DeviceID, &cfg.DeviceJID, &cfg.ChatwootURL,
 		&cfg.AccountID, &cfg.InboxID, &cfg.APIToken, &cfg.Enabled,
-		&cfg.CreatedAt, &cfg.UpdatedAt,
+		&cfg.CreatedAt, &cfg.UpdatedAt, &cfg.WebhookSecret,
 	)
 	return cfg, err
 }
@@ -1397,10 +1397,10 @@ func (r *SQLiteRepository) SaveChatwootDeviceConfig(cfg *domainChatStorage.Chatw
 	result, err := r.db.Exec(`
 		UPDATE chatwoot_device_configs
 		SET device_jid = ?, chatwoot_url = ?, account_id = ?, inbox_id = ?,
-		    api_token = ?, enabled = ?, updated_at = ?
+		    api_token = ?, enabled = ?, webhook_secret = ?, updated_at = ?
 		WHERE device_id = ?
 	`, cfg.DeviceJID, cfg.ChatwootURL, cfg.AccountID, cfg.InboxID,
-		cfg.APIToken, cfg.Enabled, cfg.UpdatedAt, cfg.DeviceID)
+		cfg.APIToken, cfg.Enabled, cfg.WebhookSecret, cfg.UpdatedAt, cfg.DeviceID)
 	if err != nil {
 		return err
 	}
@@ -1410,11 +1410,11 @@ func (r *SQLiteRepository) SaveChatwootDeviceConfig(cfg *domainChatStorage.Chatw
 		res, err := r.db.Exec(`
 			INSERT INTO chatwoot_device_configs (
 				device_id, device_jid, chatwoot_url, account_id, inbox_id,
-				api_token, enabled, created_at, updated_at
+				api_token, enabled, webhook_secret, created_at, updated_at
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, cfg.DeviceID, cfg.DeviceJID, cfg.ChatwootURL, cfg.AccountID, cfg.InboxID,
-			cfg.APIToken, cfg.Enabled, cfg.CreatedAt, cfg.UpdatedAt)
+			cfg.APIToken, cfg.Enabled, cfg.WebhookSecret, cfg.CreatedAt, cfg.UpdatedAt)
 		if err != nil {
 			return err
 		}
@@ -3268,5 +3268,8 @@ func (r *SQLiteRepository) getMigrations() []string {
 
 		// Migration 50: Media copy (type, thumbnail) that a reply quoting the message carries.
 		`ALTER TABLE messages ADD COLUMN quoted_media BLOB`,
+
+		// Migration 51: Per-device secret for Chatwoot's signed webhooks (each API channel has its own)
+		`ALTER TABLE chatwoot_device_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`,
 	}
 }

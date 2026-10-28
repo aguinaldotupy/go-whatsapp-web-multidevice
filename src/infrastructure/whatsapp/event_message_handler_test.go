@@ -353,3 +353,207 @@ func TestShouldIgnoreImageDownload(t *testing.T) {
 		})
 	}
 }
+
+func TestIsSenderKeyDistributionOnly(t *testing.T) {
+	groupJID := "120363412077831108@g.us"
+	skdm := &waE2E.SenderKeyDistributionMessage{
+		GroupID:                             protoString(groupJID),
+		AxolotlSenderKeyDistributionMessage: []byte{1, 2, 3},
+	}
+	fastSkdm := &waE2E.SenderKeyDistributionMessage{
+		GroupID:                             protoString(groupJID),
+		AxolotlSenderKeyDistributionMessage: []byte{4, 5, 6},
+	}
+
+	tests := []struct {
+		name     string
+		msg      *waE2E.Message
+		expected bool
+	}{
+		{
+			name:     "nil message",
+			msg:      nil,
+			expected: false,
+		},
+		{
+			name:     "empty message",
+			msg:      &waE2E.Message{},
+			expected: false,
+		},
+		{
+			name: "conversation only",
+			msg: &waE2E.Message{
+				Conversation: protoString("hello"),
+			},
+			expected: false,
+		},
+		{
+			name: "image only",
+			msg: &waE2E.Message{
+				ImageMessage: &waE2E.ImageMessage{Caption: protoString("look")},
+			},
+			expected: false,
+		},
+		{
+			name: "sender key distribution message only",
+			msg: &waE2E.Message{
+				SenderKeyDistributionMessage: skdm,
+			},
+			expected: true,
+		},
+		{
+			name: "fast ratchet sender key distribution message only",
+			msg: &waE2E.Message{
+				FastRatchetKeySenderKeyDistributionMessage: fastSkdm,
+			},
+			expected: true,
+		},
+		{
+			name: "sender key with message context info",
+			msg: &waE2E.Message{
+				SenderKeyDistributionMessage: skdm,
+				MessageContextInfo:           &waE2E.MessageContextInfo{},
+			},
+			expected: true,
+		},
+		{
+			name: "bundled sender key with conversation text",
+			msg: &waE2E.Message{
+				SenderKeyDistributionMessage: skdm,
+				Conversation:                 protoString("actual message content"),
+			},
+			expected: false,
+		},
+		{
+			name: "bundled sender key with image",
+			msg: &waE2E.Message{
+				SenderKeyDistributionMessage: skdm,
+				ImageMessage:                 &waE2E.ImageMessage{},
+			},
+			expected: false,
+		},
+		{
+			name: "ephemeral wrapped sender key only",
+			msg: &waE2E.Message{
+				EphemeralMessage: &waE2E.FutureProofMessage{
+					Message: &waE2E.Message{
+						SenderKeyDistributionMessage: skdm,
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "ephemeral wrapped sender key with conversation",
+			msg: &waE2E.Message{
+				EphemeralMessage: &waE2E.FutureProofMessage{
+					Message: &waE2E.Message{
+						SenderKeyDistributionMessage: skdm,
+						Conversation:                 protoString("ephemeral text"),
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isSenderKeyDistributionOnly(tt.msg)
+			if got != tt.expected {
+				t.Errorf("isSenderKeyDistributionOnly() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHandleWebhookForwardSkipsSenderKeyDistribution(t *testing.T) {
+	originalWebhookURLs := config.WhatsappWebhook
+	originalWebhookEvents := config.WhatsappWebhookEvents
+	originalChatwootEnabled := config.ChatwootEnabled
+	originalSubmit := submitWebhookFn
+	originalLog := log
+	defer func() {
+		config.WhatsappWebhook = originalWebhookURLs
+		config.WhatsappWebhookEvents = originalWebhookEvents
+		config.ChatwootEnabled = originalChatwootEnabled
+		submitWebhookFn = originalSubmit
+		log = originalLog
+	}()
+
+	log = waLog.Noop
+	config.WhatsappWebhook = []string{"https://example.test/webhook"}
+	config.WhatsappWebhookEvents = nil
+	config.ChatwootEnabled = false
+
+	delivered := make(chan map[string]any, 8)
+	submitWebhookFn = func(_ context.Context, payload map[string]any, _ string, _ *domainChatStorage.DeviceWebhookConfig) error {
+		delivered <- payload
+		return nil
+	}
+
+	groupChat := types.NewJID("120363412077831108", types.GroupServer)
+	senderJID := types.NewJID("628111111111", types.DefaultUserServer)
+
+	// 1. Pure SenderKeyDistributionMessage must be skipped
+	skdmEvent := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     groupChat,
+				Sender:   senderJID,
+				IsFromMe: false,
+			},
+			ID:        "3EB0F3F31EB7EFE377CBF6",
+			Timestamp: time.Date(2026, time.October, 26, 17, 42, 9, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{
+				GroupID:                             protoString(groupChat.String()),
+				AxolotlSenderKeyDistributionMessage: []byte{1, 2, 3},
+			},
+		},
+	}
+	handleWebhookForward(context.Background(), skdmEvent, nil)
+
+	// 2. Bundled SenderKeyDistributionMessage with conversation must be delivered
+	bundledEvent := &events.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:     groupChat,
+				Sender:   senderJID,
+				IsFromMe: false,
+			},
+			ID:        "BUNDLED-MSG-1",
+			Timestamp: time.Date(2026, time.October, 26, 17, 42, 10, 0, time.UTC),
+		},
+		Message: &waE2E.Message{
+			SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{
+				GroupID:                             protoString(groupChat.String()),
+				AxolotlSenderKeyDistributionMessage: []byte{1, 2, 3},
+			},
+			Conversation: protoString("Hello group!"),
+		},
+	}
+	handleWebhookForward(context.Background(), bundledEvent, nil)
+
+	select {
+	case payload := <-delivered:
+		eventPayload, ok := payload["payload"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected payload map, got %T", payload["payload"])
+		}
+		if got := eventPayload["id"]; got != "BUNDLED-MSG-1" {
+			t.Fatalf("expected bundled message BUNDLED-MSG-1 to be delivered, got %v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bundled message webhook submission")
+	}
+
+	// Assert no further delivery arrived (the pure SKDM was skipped)
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case payload := <-delivered:
+		t.Fatalf("unexpected delivery of pure sender key distribution message: %+v", payload)
+	default:
+	}
+}

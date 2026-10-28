@@ -227,6 +227,13 @@ func (r *historyMessageRepoSpy) GetChatNameWithPushName(jid types.JID, _ string,
 	return jid.String()
 }
 
+func (r *historyMessageRepoSpy) GetChatNameWithPushNameByDevice(_ string, jid types.JID, _ string, _ string, pushName string) string {
+	if pushName != "" {
+		return pushName
+	}
+	return jid.String()
+}
+
 // TestProcessHistorySyncRoutesOnDemandToConversationMessages pins the
 // on-demand history sync routing fix: HISTORY_SYNC_ON_DEMAND (the phone's
 // reply to Client.BuildHistorySyncRequest, used for "load older messages")

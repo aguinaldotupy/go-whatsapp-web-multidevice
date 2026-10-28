@@ -50,6 +50,10 @@ func (r *chatwootRouteTestRepo) CountChatwootDeviceConfigs() (int, error) {
 	return r.count, nil
 }
 
+func (r *chatwootRouteTestRepo) GetChatwootDeviceConfigByIdentifier(string) (*domainChatStorage.ChatwootDeviceConfig, error) {
+	return nil, nil
+}
+
 // GetLatestChatwootMessageLinkByConversation mirrors the real repo's matching
 // rules (account scope, legacy-zero wildcard, config scope) so a handler that
 // passed the wrong scope would get nil here instead of silently succeeding.

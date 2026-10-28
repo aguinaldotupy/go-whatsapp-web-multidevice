@@ -357,15 +357,19 @@ func newMessageActionTestService(t *testing.T, remoteErr error) (serviceMessage,
 
 func TestDownloadMedia_Validations(t *testing.T) {
 	service, repo, ctx := newMessageActionTestService(t, nil)
-	senderJID := "5511989770388@s.whatsapp.net"
+	deviceID := "device-a@s.whatsapp.net"
 	chatJID := "5511988920869@s.whatsapp.net"
 	otherJID := "5511999999999@s.whatsapp.net"
+
+	service.validateJIDFn = func(_ *whatsmeow.Client, p string) (types.JID, error) {
+		return utils.ParseJID(p)
+	}
 
 	require.NoError(t, repo.StoreMessage(&domainChatStorage.Message{
 		ID:         "media-msg-1",
 		ChatJID:    chatJID,
-		DeviceID:   senderJID,
-		Sender:     senderJID,
+		DeviceID:   deviceID,
+		Sender:     deviceID,
 		MediaType:  "audio",
 		DirectPath: "/v/t62/media.enc",
 		IsFromMe:   true,
@@ -374,8 +378,8 @@ func TestDownloadMedia_Validations(t *testing.T) {
 	require.NoError(t, repo.StoreMessage(&domainChatStorage.Message{
 		ID:        "text-msg-1",
 		ChatJID:   chatJID,
-		DeviceID:  senderJID,
-		Sender:    senderJID,
+		DeviceID:  deviceID,
+		Sender:    deviceID,
 		Content:   "just text",
 		IsFromMe:  true,
 	}))
@@ -399,28 +403,12 @@ func TestDownloadMedia_Validations(t *testing.T) {
 	assert.ErrorAs(t, err, &valErr)
 	assert.Contains(t, err.Error(), "does not contain downloadable media")
 
-	// 3. Message does not belong to chat -> ValidationError
-	service.validateJIDFn = func(_ *whatsmeow.Client, p string) (types.JID, error) {
-		parsed, err := utils.ParseJID(p)
-		return parsed, err
-	}
+	// 3. Message does not belong to chat -> NotFoundError (scoped query)
 	_, err = service.DownloadMedia(ctx, domainMessage.DownloadMediaRequest{
 		Phone:     otherJID,
 		MessageID: "media-msg-1",
 	})
 	require.Error(t, err)
-	assert.ErrorAs(t, err, &valErr)
-	assert.Contains(t, err.Error(), "does not belong to chat")
-
-	// 4. Outgoing message requested with device's own number (sender) matches
-	// (it fails later at whatsapp download, but passes validation without "does not belong to chat")
-	canceledCtx, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err = service.DownloadMedia(canceledCtx, domainMessage.DownloadMediaRequest{
-		Phone:     senderJID,
-		MessageID: "media-msg-1",
-	})
-	if err != nil {
-		assert.NotContains(t, err.Error(), "does not belong to chat")
-	}
+	assert.ErrorAs(t, err, &notFoundErr)
+	assert.Contains(t, err.Error(), "not found in chat")
 }

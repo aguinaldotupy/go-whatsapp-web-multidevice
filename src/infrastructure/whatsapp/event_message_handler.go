@@ -14,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func handleMessage(ctx context.Context, evt *events.Message, chatStorageRepo domainChatStorage.IChatStorageRepository, client *whatsmeow.Client) {
@@ -166,7 +167,7 @@ func materializeSecretEditMessage(ctx context.Context, evt *events.Message, clie
 
 func handleWebhookForward(ctx context.Context, evt *events.Message, client *whatsmeow.Client, preparedPoll ...*webhookPollPayload) {
 	// Skip webhook for protocol messages that are internal sync messages
-	if protocolMessage := evt.Message.GetProtocolMessage(); protocolMessage != nil {
+	if protocolMessage := utils.UnwrapMessage(evt.Message).GetProtocolMessage(); protocolMessage != nil {
 		protocolType := protocolMessage.GetType().String()
 		// Only allow REVOKE and MESSAGE_EDIT through - skip all other protocol messages
 		// (HISTORY_SYNC_NOTIFICATION, APP_STATE_SYNC_KEY_SHARE, EPHEMERAL_SYNC_RESPONSE, etc.)
@@ -177,6 +178,12 @@ func handleWebhookForward(ctx context.Context, evt *events.Message, client *what
 			log.Debugf("Skipping webhook for protocol message type: %s", protocolType)
 			return
 		}
+	}
+
+	// Skip webhook for internal group sender key distribution messages that carry no user content
+	if isSenderKeyDistributionOnly(evt.Message) {
+		log.Debugf("Skipping webhook for sender key distribution message %s", evt.Info.ID)
+		return
 	}
 
 	// Broadcast/status messages are never forwarded, regardless of Chatwoot:
@@ -200,4 +207,40 @@ func handleWebhookForward(ctx context.Context, evt *events.Message, client *what
 			logrus.Error("Failed forward to webhook: ", err)
 		}
 	}(evt, client, pollPayload)
+}
+
+// isSenderKeyDistributionOnly reports whether msg contains only a Signal group
+// sender key distribution payload (or fast-ratchet variant) with no actual user
+// content (text, media, reaction, poll, or other recognized message payload).
+// These are internal ratchet synchronization packets that whatsmeow dispatches
+// to event handlers, but they must not be forwarded as empty webhooks or
+// synced to Chatwoot.
+func isSenderKeyDistributionOnly(rawMsg *waE2E.Message) bool {
+	if rawMsg == nil {
+		return false
+	}
+	msg := utils.UnwrapMessage(rawMsg)
+	if msg == nil {
+		return false
+	}
+
+	var hasSenderKey bool
+	var hasOtherFields bool
+
+	msg.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		name := string(fd.Name())
+		switch name {
+		case "senderKeyDistributionMessage", "sender_key_distribution_message",
+			"fastRatchetKeySenderKeyDistributionMessage", "fast_ratchet_key_sender_key_distribution_message":
+			hasSenderKey = true
+		case "messageContextInfo", "message_context_info":
+			// Context / crypto metadata attached to the envelope, not user content
+		default:
+			hasOtherFields = true
+			return false
+		}
+		return true
+	})
+
+	return hasSenderKey && !hasOtherFields
 }

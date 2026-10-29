@@ -32,22 +32,11 @@ func (r *scheduleRepoStub) CreateScheduledSend(job *domainChatStorage.ScheduledS
 
 type scheduleSendStub struct {
 	domainSend.ISendUsecase
-	sendText        func() (domainSend.GenericResponse, error)
-	sendInteractive func(domainSend.InteractiveRequest) (domainSend.GenericResponse, error)
+	sendText func() (domainSend.GenericResponse, error)
 }
 
 func (s *scheduleSendStub) SendText(context.Context, domainSend.MessageRequest) (domainSend.GenericResponse, error) {
-	if s.sendText != nil {
-		return s.sendText()
-	}
-	return domainSend.GenericResponse{}, nil
-}
-
-func (s *scheduleSendStub) SendInteractive(_ context.Context, req domainSend.InteractiveRequest) (domainSend.GenericResponse, error) {
-	if s.sendInteractive != nil {
-		return s.sendInteractive(req)
-	}
-	return domainSend.GenericResponse{}, nil
+	return s.sendText()
 }
 
 func TestScheduledSendStoresUserFacingDeviceID(t *testing.T) {
@@ -461,48 +450,4 @@ func TestScheduledSendRejectsUnschedulableRequests(t *testing.T) {
 	})
 	require.ErrorAs(t, err, &validationErr)
 	require.ErrorContains(t, err, "not found")
-}
-
-func TestScheduledSendInteractive(t *testing.T) {
-	repo := &scheduleRepoStub{}
-	base := &scheduleSendStub{}
-	service := NewScheduleService(repo, base, nil, t.TempDir())
-	service.now = func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) }
-	decorated := NewScheduledSendService(base, service)
-	ctx := whatsapp.ContextWithDevice(context.Background(), whatsapp.NewDeviceInstance("slot-a", nil, nil))
-	response, err := decorated.SendInteractive(ctx, domainSend.InteractiveRequest{
-		BaseRequest: domainSend.BaseRequest{
-			Phone: "628123456789",
-			ScheduleOptions: domainSend.ScheduleOptions{
-				ScheduledAt: "2026-09-21T11:00:00Z",
-				Timezone:    "UTC",
-			},
-		},
-		Body: "Click below",
-		Buttons: []domainSend.InteractiveButton{
-			{Name: "quick_reply", Params: []byte(`{"display_text":"Yes","id":"yes"}`)},
-		},
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, response.ScheduleID)
-	require.Equal(t, "slot-a", repo.created.DeviceID)
-	require.Equal(t, "interactive", repo.created.MessageType)
-	require.Equal(t, "Click below", repo.created.Summary)
-
-	// Test delivery
-	var received domainSend.InteractiveRequest
-	deliveringBase := &scheduleSendStub{
-		sendInteractive: func(req domainSend.InteractiveRequest) (domainSend.GenericResponse, error) {
-			received = req
-			return domainSend.GenericResponse{MessageID: "msg-interactive"}, nil
-		},
-	}
-	deliverService, deliverRepo := newScheduleTestService(t, deliveringBase)
-	job := newScheduleTestJob("job-interactive", "once", scheduleTestNow.Add(-time.Minute))
-	job.MessageType = "interactive"
-	job.PayloadJSON = string(repo.created.PayloadJSON)
-	claimed := claimScheduleTestJob(t, deliverService, deliverRepo, job)
-	require.NoError(t, deliverService.deliver(scheduleTestContext(), claimed))
-	require.Equal(t, "Click below", received.Body)
-	require.Len(t, received.Buttons, 1)
 }

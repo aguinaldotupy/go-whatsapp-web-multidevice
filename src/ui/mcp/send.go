@@ -139,11 +139,10 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 			}
 		}
 		res, err = s.sendService.SendInteractive(ctx, domainSend.InteractiveRequest{
-			BaseRequest: base,
-			Header:      request.GetString("header", ""),
-			Body:        request.GetString("body", ""),
-			Footer:      request.GetString("footer", ""),
-			Buttons:     buttons,
+			Phone:   phone,
+			Body:    request.GetString("body", ""),
+			Footer:  request.GetString("footer", ""),
+			Buttons: buttons,
 		})
 	case "link":
 		res, err = s.sendService.SendLink(ctx, domainSend.LinkRequest{

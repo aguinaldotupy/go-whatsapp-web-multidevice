@@ -98,6 +98,15 @@ type BlocklistResponse struct {
 	Data []BlocklistItem `json:"data"`
 }
 
+type SubscribePresenceRequest struct {
+	Phone string `json:"phone" query:"phone"`
+}
+
+type SubscribePresenceResponse struct {
+	Subscribed bool   `json:"subscribed"`
+	JID        string `json:"jid"`
+}
+
 type BusinessProfileRequest struct {
 	Phone string `json:"phone" query:"phone"`
 }

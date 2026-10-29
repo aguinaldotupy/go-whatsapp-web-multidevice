@@ -580,7 +580,7 @@ func TestQuotedMediaGoesWithItsMessage(t *testing.T) {
 		"revoke": {func(r *SQLiteRepository) error {
 			jid := types.NewJID("550000000002", types.DefaultUserServer)
 			return r.CreateMessage(qmDeviceContext("device-a"), &events.Message{
-				Info: types.MessageInfo{ID: "REVOKE-1", Timestamp: time.Now(), MessageSource: types.MessageSource{Chat: jid, Sender: jid}},
+				Info: types.MessageInfo{ID: "REVOKE-1", Timestamp: time.Now(), MessageSource: types.MessageSource{Chat: jid, Sender: jid, IsFromMe: true}},
 				Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
 					Type: waE2E.ProtocolMessage_REVOKE.Enum(), Key: &waCommon.MessageKey{ID: proto.String("m1")},
 				}},

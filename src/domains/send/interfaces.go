@@ -20,11 +20,11 @@ type IMediaSender interface {
 
 // IInteractionSender handles interaction message sending operations
 type IInteractionSender interface {
+	SendInteractive(ctx context.Context, request InteractiveRequest) (response GenericResponse, err error)
 	SendContact(ctx context.Context, request ContactRequest) (response GenericResponse, err error)
 	SendLink(ctx context.Context, request LinkRequest) (response GenericResponse, err error)
 	SendLocation(ctx context.Context, request LocationRequest) (response GenericResponse, err error)
 	SendPoll(ctx context.Context, request PollRequest) (response GenericResponse, err error)
-	SendInteractive(ctx context.Context, request InteractiveRequest) (response GenericResponse, err error)
 	SendButtonReply(ctx context.Context, request ButtonReplyRequest) (response GenericResponse, err error)
 }
 

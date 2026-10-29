@@ -28,7 +28,6 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/basicauth"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/logger"
-	"github.com/gofiber/fiber/v3/middleware/static"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -43,10 +42,31 @@ var restCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(restCmd)
+	rootCmd.PersistentFlags().BoolVar(
+		&config.AppAllowUnauthenticated,
+		"allow-unauthenticated",
+		config.AppAllowUnauthenticated,
+		"expose the API without Basic Auth on a non-loopback bind (INSECURE). Use only behind a reverse proxy that authenticates clients",
+	)
+	rootCmd.PersistentFlags().StringSliceVar(
+		&config.AppTrustedOrigins,
+		"trusted-origins",
+		config.AppTrustedOrigins,
+		"extra browser origins allowed to perform state-changing requests, alongside the request host and APP_CORS_ALLOWED_ORIGINS",
+	)
+	rootCmd.PersistentFlags().BoolVar(
+		&config.ChatwootWebhookAllowUnsigned,
+		"chatwoot-webhook-allow-unsigned",
+		config.ChatwootWebhookAllowUnsigned,
+		"accept Chatwoot webhooks when no webhook secret is configured (INSECURE)",
+	)
 }
 func restServer(_ *cobra.Command, _ []string) {
 	// registerMcpOAuth depends on these values being loaded after flag parsing.
 	loadMcpOAuthEnvConfig()
+	loadHTTPHardeningConfig()
+	ensureWebhookSigningSecret()
+	enforceAuthenticationPolicy()
 	fiberConfig := fiber.Config{
 		TrustProxy: true,
 		BodyLimit:  int(config.WhatsappSettingMaxVideoSize),
@@ -64,7 +84,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	// fetch media under /statics and authenticate with the headers below.
 	app.Use(newCORSMiddleware())
 
-	app.Use(config.AppBasePath+"/statics", static.New("./statics"))
+	registerStoredStatic(app)
 
 	if config.SentryDSN != "" {
 		_ = pkgSentry.InitSentry(config.SentryDSN, config.SentryEnvironment, resolveSentryRelease(), config.SentryTracesSampleRate)
@@ -92,20 +112,27 @@ func restServer(_ *cobra.Command, _ []string) {
 		return c.Status(http.StatusServiceUnavailable).SendString("Service Unavailable")
 	})
 
-	// Chatwoot webhook - registered BEFORE basic auth middleware
-	// This allows Chatwoot to send webhooks without authentication. The handler
-	// is stateless and shared with the authenticated sync routes registered below.
+	// Chatwoot webhook - registered BEFORE basic auth middleware so Chatwoot can
+	// reach it. The handler rejects an empty effective secret unless
+	// CHATWOOT_WEBHOOK_ALLOW_UNSIGNED is set. It is shared with the
+	// authenticated sync routes registered below.
 	var chatwootHandler *rest.ChatwootHandler
 	if config.ChatwootEnabled {
 		// Auto-provision the inbox, install the per-device client registry, then
 		// start the retry worker (registry before worker — see initChatwootForwarding).
 		initChatwootForwarding(chatStorageRepo)
 
+		if config.ChatwootWebhookAllowUnsigned {
+			logrus.Warn("CHATWOOT_WEBHOOK_ALLOW_UNSIGNED is enabled: Chatwoot webhooks are accepted when the effective secret is empty. Leave this off unless the endpoint is only reachable on a trusted network.")
+		}
 		chatwootHandler = rest.NewChatwootHandler(appUsecase, sendUsecase, messageUsecase, dm, chatStorageRepo)
 		webhookPath := "/chatwoot/webhook"
 		if config.AppBasePath != "" {
 			webhookPath = config.AppBasePath + webhookPath
 		}
+		// Both webhook routes read the body before checking a secret, so refuse
+		// compressed bodies Fiber would expand up to the app BodyLimit.
+		app.Use(webhookPath, middleware.RejectCompressedBody())
 		// In front of both webhook routes: a Chatwoot-signed request is only
 		// remembered as delivered once it has been answered 2xx.
 		app.Use(webhookPath, rest.ChatwootWebhookReplayGuard())
@@ -143,6 +170,12 @@ func restServer(_ *cobra.Command, _ []string) {
 		app.Use(middleware.WebsocketQueryAuth())
 		app.Use(newBasicAuthMiddleware(account))
 	}
+
+	// State-changing browser requests must come from a trusted origin. Routes
+	// registered above (health, stored files, Chatwoot webhooks, OAuth) are
+	// unchanged. Non-browser clients that send no Origin or Referer are still
+	// accepted.
+	app.Use(middleware.BrowserOriginGuard())
 
 	// Create base path group or use app directly
 	var apiGroup fiber.Router = app

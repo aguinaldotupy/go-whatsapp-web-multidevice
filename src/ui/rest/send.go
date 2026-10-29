@@ -30,6 +30,16 @@ func InitRestSend(app fiber.Router, service domainSend.ISendUsecase) Send {
 	return rest
 }
 
+// SendInteractive binds an immediate interactive request and returns the send result.
+func (controller *Send) SendInteractive(c fiber.Ctx) error {
+	var request domainSend.InteractiveRequest
+	utils.PanicIfNeeded(c.Bind().Body(&request))
+	utils.SanitizePhone(&request.Phone)
+	response, err := controller.Service.SendInteractive(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
+	utils.PanicIfNeeded(err)
+	return c.JSON(utils.ResponseData{Status: 200, Code: "SUCCESS", Message: response.Status, Results: response})
+}
+
 func (controller *Send) SendText(c fiber.Ctx) error {
 	var request domainSend.MessageRequest
 	err := c.Bind().Body(&request)
@@ -281,24 +291,6 @@ func (controller *Send) SendChatPresence(c fiber.Ctx) error {
 	utils.SanitizePhone(&request.Phone)
 
 	response, err := controller.Service.SendChatPresence(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
-	utils.PanicIfNeeded(err)
-
-	return c.JSON(utils.ResponseData{
-		Status:  200,
-		Code:    "SUCCESS",
-		Message: response.Status,
-		Results: response,
-	})
-}
-
-func (controller *Send) SendInteractive(c fiber.Ctx) error {
-	var request domainSend.InteractiveRequest
-	err := c.Bind().Body(&request)
-	utils.PanicIfNeeded(err)
-
-	utils.SanitizePhone(&request.Phone)
-
-	response, err := controller.Service.SendInteractive(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
 	utils.PanicIfNeeded(err)
 
 	return c.JSON(utils.ResponseData{

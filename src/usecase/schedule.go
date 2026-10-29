@@ -153,8 +153,6 @@ func (s *ScheduleService) validateScheduledPayload(ctx context.Context, messageT
 		err = validations.ValidateSendLocation(ctx, request.(domainSend.LocationRequest))
 	case "poll":
 		err = validations.ValidateSendPoll(ctx, request.(domainSend.PollRequest))
-	case "interactive":
-		err = validations.ValidateSendInteractive(ctx, request.(domainSend.InteractiveRequest))
 	case "forward":
 		err = s.validateScheduledForward(ctx, request.(domainSend.ForwardRequest))
 	}
@@ -667,12 +665,6 @@ func (s *ScheduleService) dispatch(ctx context.Context, job *domainChatStorage.S
 			return domainSend.GenericResponse{}, fmt.Errorf("%w: %w", errScheduledPayload, err)
 		}
 		return s.base.SendPoll(ctx, req)
-	case "interactive":
-		var req domainSend.InteractiveRequest
-		if err := json.Unmarshal([]byte(job.PayloadJSON), &req); err != nil {
-			return domainSend.GenericResponse{}, fmt.Errorf("%w: %w", errScheduledPayload, err)
-		}
-		return s.base.SendInteractive(ctx, req)
 	case "forward":
 		var req domainSend.ForwardRequest
 		if err := json.Unmarshal([]byte(job.PayloadJSON), &req); err != nil {
@@ -755,6 +747,11 @@ type scheduledSendService struct {
 	scheduler *ScheduleService
 }
 
+// SendInteractive bypasses scheduling because interactive requests are immediate-only.
+func (s *scheduledSendService) SendInteractive(ctx context.Context, req domainSend.InteractiveRequest) (domainSend.GenericResponse, error) {
+	return s.base.SendInteractive(ctx, req)
+}
+
 func NewScheduledSendService(base domainSend.ISendUsecase, scheduler *ScheduleService) domainSend.ISendUsecase {
 	return &scheduledSendService{base: base, scheduler: scheduler}
 }
@@ -818,19 +815,6 @@ func (s *scheduledSendService) SendPoll(ctx context.Context, req domainSend.Poll
 		return s.base.SendPoll(ctx, req)
 	}
 	return s.scheduler.Create(ctx, "poll", req.Phone, req.Question, req.ScheduleOptions, req, nil)
-}
-func (s *scheduledSendService) SendInteractive(ctx context.Context, req domainSend.InteractiveRequest) (domainSend.GenericResponse, error) {
-	if !req.IsScheduled() {
-		return s.base.SendInteractive(ctx, req)
-	}
-	summary := req.Body
-	if summary == "" {
-		summary = req.Header
-	}
-	if summary == "" {
-		summary = "Interactive message"
-	}
-	return s.scheduler.Create(ctx, "interactive", req.Phone, summary, req.ScheduleOptions, req, nil)
 }
 func (s *scheduledSendService) SendPresence(ctx context.Context, req domainSend.PresenceRequest) (domainSend.GenericResponse, error) {
 	return s.base.SendPresence(ctx, req)

@@ -50,7 +50,10 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 		handleTemporaryBan(ctx, instance, evt)
 	case *events.NotifyAccountReachoutTimelock:
 		handleReachoutTimelock(ctx, instance, evt)
-	case *events.Connected, *events.PushNameSetting:
+	case *events.Connected:
+		handleConnectionEvents(ctx, client, instance)
+		newsletterLiveUpdates.renewDevice(instance.ID())
+	case *events.PushNameSetting:
 		handleConnectionEvents(ctx, client, instance)
 	case *events.StreamReplaced:
 		handleStreamReplaced(instance)
@@ -278,7 +281,7 @@ func handleConnectionEvents(_ context.Context, client *whatsmeow.Client, instanc
 
 		// Persist updated JID/DisplayName to database after successful connection
 		// Skip if instance.ID looks like a JID (auto-created device) to avoid recreating deleted duplicates
-		if repo := instance.GetChatStorage(); repo != nil && !strings.Contains(instance.ID(), "@") {
+		if repo := instance.GetChatStorage(); repo != nil && instance.ID() != "" && !strings.Contains(instance.ID(), "@") {
 			jid := instance.JID()
 			displayName := instance.DisplayName()
 			if jid != "" {

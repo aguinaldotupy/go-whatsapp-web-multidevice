@@ -124,7 +124,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG || 'gowa' }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT || 'gowa' }}
-        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
         uses: getsentry/action-release@v3
         with:
           environment: production

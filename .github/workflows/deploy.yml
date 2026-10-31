@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
     steps:
       - name: Checkout
@@ -120,11 +122,7 @@ jobs:
           fi
 
       - name: Create Sentry Release & Notify Deploy
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ secrets.SENTRY_ORG || 'gowa' }}
-          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT || 'gowa' }}
-        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        if: ${{ env.SENTRY_AUTH_TOKEN != '' }}
         uses: getsentry/action-release@v3
         with:
           environment: production
@@ -132,3 +130,7 @@ jobs:
           set_commits: "auto"
           ignore_missing: true
           ignore_empty: true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG || 'gowa' }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT || 'gowa' }}
